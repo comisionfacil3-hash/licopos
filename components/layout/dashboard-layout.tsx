@@ -42,7 +42,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   // Módulos principales en bottom nav
   const mainNavigation = [
-    { name: 'Inicio', href: '/dashboard', icon: 'home' },
+    { name: 'Inicio Falta', href: '/dashboard', icon: 'home' },
     { name: 'Productos', href: '/dashboard/productos', icon: 'package' },
     { name: 'Ventas', href: '/dashboard/pos', icon: 'shopping-cart' },
     { name: 'Caja', href: '/dashboard/caja', icon: 'cash' },
@@ -58,10 +58,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     { name: 'Compras', href: '/dashboard/compras', icon: 'truck' },
     { name: 'Gastos', href: '/dashboard/gastos', icon: 'receipt' },
     { name: 'Clientes', href: '/dashboard/clientes', icon: 'users' },
-    { name: 'Créditos', href: '/dashboard/creditos', icon: 'credit-card' },
-    { name: 'Cotización', href: '/dashboard/cotizacion', icon: 'calculator' },
+    { name: 'Créditos Falta', href: '/dashboard/creditos', icon: 'credit-card' },
+    { name: 'Cotización Falta', href: '/dashboard/cotizacion', icon: 'calculator' },
     { name: 'Bajas', href: '/dashboard/productos/perdidas', icon: '' },
-    { name: 'Usuarios', href: '/dashboard/usuarios', icon: 'user-group' },
+    { name: 'Usuarios Falta', href: '/dashboard/usuarios', icon: 'user-group' },
   ]
 
   const getIcon = (type: string, size = 'w-6 h-6') => {
