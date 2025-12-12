@@ -52,7 +52,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   // Módulos secundarios en modal "Más"
   const moreModules = [
     { name: 'Historial de Ventas', href: '/dashboard/ventas', icon: 'list' },
-    { name: 'Reportes', href: '/dashboard/reportes', icon: 'chart' },
+    { name: 'Reportes Falta', href: '/dashboard/reportes', icon: 'chart' },
     { name: 'Historial Cajas', href: '/dashboard/caja/historial', icon: 'list'},
     { name: 'Proveedores', href: '/dashboard/proveedores', icon: 'building' },
     { name: 'Compras', href: '/dashboard/compras', icon: 'truck' },
