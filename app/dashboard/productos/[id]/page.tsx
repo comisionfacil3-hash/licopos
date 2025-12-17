@@ -7,6 +7,8 @@ import { useAuth } from '@/lib/hooks/use-auth'
 import { ProductoWithCategoria, Categoria, CreateProductoForm } from '@/types/database'
 import { calcularMargen } from '@/lib/utils/productos'
 import { formatCurrency } from '@/lib/utils/format'
+import PinModal from '@/components/ui/pin-modal'
+
 
 export default function EditarProductoPage() {
   const [formData, setFormData] = useState<CreateProductoForm>({
@@ -33,6 +35,9 @@ export default function EditarProductoPage() {
   const [imagenActual, setImagenActual] = useState<string | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [producto, setProducto] = useState<ProductoWithCategoria | null>(null)
+  const [showPinModal, setShowPinModal] = useState(false)
+  const [pinVerificado, setPinVerificado] = useState(false)
+  const [stockOriginal, setStockOriginal] = useState<number>(0)
   
   const { usuario } = useAuth()
   const router = useRouter()
@@ -76,6 +81,7 @@ export default function EditarProductoPage() {
 
       setProducto(data)
       setImagenActual(data.imagen_url)
+      setStockOriginal(data.stock_actual)
       
       // Llenar formulario
       setFormData({
@@ -118,17 +124,36 @@ export default function EditarProductoPage() {
     }
   }
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      setImagen(file)
-      
-      // Crear preview
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setPreviewUrl(reader.result as string)
+      try {
+        // Importar y comprimir imagen
+        const { compressImage } = await import('@/lib/utils/image-compressor')
+        const compressedFile = await compressImage(file, {
+          maxWidth: 800,
+          maxHeight: 800,
+          quality: 0.7
+        })
+        
+        setImagen(compressedFile)
+        
+        // Crear preview
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setPreviewUrl(reader.result as string)
+        }
+        reader.readAsDataURL(compressedFile)
+      } catch (error) {
+        console.error('Error al comprimir imagen:', error)
+        // Si falla la compresión, usar la imagen original
+        setImagen(file)
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setPreviewUrl(reader.result as string)
+        }
+        reader.readAsDataURL(file)
       }
-      reader.readAsDataURL(file)
     }
   }
 
@@ -185,6 +210,25 @@ export default function EditarProductoPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    // Verificar si cambió el stock y no se ha verificado PIN
+    const stockCambio = formData.stock_actual !== stockOriginal
+    
+    if (stockCambio && !pinVerificado) {
+      // Verificar si hay PIN configurado
+      const { data: sucursalData } = await supabase
+        .from('sucursales')
+        .select('pin_seguridad')
+        .eq('id', usuario?.sucursal_id)
+        .single()
+      
+      if (sucursalData?.pin_seguridad) {
+        setShowPinModal(true)
+        return
+      }
+      // Si no hay PIN configurado, continuar sin verificación
+    }
+    
     setSaving(true)
 
     try {
@@ -588,6 +632,24 @@ export default function EditarProductoPage() {
           </button>
         </div>
       </form>
+
+      {/* Modal de PIN */}
+      {showPinModal && (
+        <PinModal
+          isOpen={showPinModal}
+          onClose={() => setShowPinModal(false)}
+          onSuccess={() => {
+            setPinVerificado(true)
+            // Ejecutar el submit después de verificar
+            setTimeout(() => {
+              document.querySelector('form')?.requestSubmit()
+            }, 100)
+          }}
+          sucursalId={usuario?.sucursal_id || ''}
+          titulo="Modificación de Stock"
+          mensaje="Ingresa el PIN para autorizar el cambio de stock"
+        />
+      )}
     </div>
   )
 }

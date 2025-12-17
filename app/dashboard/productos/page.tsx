@@ -61,7 +61,6 @@ export default function ProductosPage() {
           categoria:categorias(*)
         `)
         .eq('sucursal_id', usuario?.sucursal_id)
-        .eq('activo', true)
         .order('nombre')
 
       if (error) throw error
@@ -141,14 +140,25 @@ export default function ProductosPage() {
     const stockText = getStockStatusText(stockStatus)
     
     return (
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-200 hover:shadow-md transition-shadow">
+      <div className={`relative bg-white rounded-xl p-4 shadow-sm border transition-shadow ${
+        producto.activo 
+          ? 'border-gray-200 hover:shadow-md' 
+          : 'border-orange-300 bg-orange-50 opacity-75'
+      }`}>
+        {/* Badge de inactivo */}
+        {!producto.activo && (
+          <div className="absolute top-2 right-2 bg-orange-500 text-white text-xs px-2 py-1 rounded-full">
+            Inactivo
+          </div>
+        )}
+        
         {/* Imagen */}
-        <div className="aspect-square mb-3 bg-gray-100 rounded-lg overflow-hidden">
+        <div className="aspect-square mb-3 bg-gray-100 rounded-lg overflow-hidden relative">
           {producto.imagen_url ? (
             <img
               src={producto.imagen_url}
               alt={producto.nombre}
-              className="w-full h-full object-cover"
+              className={`w-full h-full object-cover ${!producto.activo ? 'grayscale' : ''}`}
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-gray-400">
@@ -222,7 +232,8 @@ export default function ProductosPage() {
                 </svg>
               ) : (
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h1m4 0h1m-6 4h8m-8 4h8a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               )}
             </button>

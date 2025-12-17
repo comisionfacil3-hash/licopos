@@ -35,17 +35,23 @@ interface TraspasoDetalle {
   nombre_producto: string
   cantidad: number
   costo_unitario: number
+  producto_origen_id: string
 }
 
 interface Traspaso {
   id: string
   numero_traspaso: number
+  sucursal_origen_id: string
+  sucursal_destino_id: string
   sucursal_origen_nombre: string
   sucursal_destino_nombre: string
   usuario_nombre: string
-  estado: string
+  aceptado_por_nombre: string | null
+  estado: 'pendiente' | 'aceptado' | 'completado' | 'rechazado' | 'anulado'
   notas: string | null
+  notas_destino: string | null
   created_at: string
+  aceptado_at: string | null
   detalles: TraspasoDetalle[]
   total_items: number
   total_costo: number
@@ -74,9 +80,16 @@ export default function TraspasosPage() {
   // Estado para éxito
   const [showExito, setShowExito] = useState(false)
   const [traspasoExitoso, setTraspasoExitoso] = useState<number | null>(null)
+  const [mensajeExito, setMensajeExito] = useState('')
   
   // Permisos
   const [tienePermiso, setTienePermiso] = useState(false)
+
+  // Filtro de vista
+  const [filtroVista, setFiltroVista] = useState<'todos' | 'enviados' | 'recibidos' | 'pendientes'>('todos')
+
+  // Estado para procesar aceptación
+  const [procesandoAceptacion, setProcesandoAceptacion] = useState(false)
 
   const { usuario } = useAuth()
   const supabase = createClient()
@@ -136,7 +149,7 @@ export default function TraspasosPage() {
         .select('*')
         .eq('empresa_id', usuario.empresa_id)
         .order('created_at', { ascending: false })
-        .limit(50)
+        .limit(100)
 
       if (traspasosData && traspasosData.length > 0) {
         // Obtener IDs únicos
@@ -146,7 +159,10 @@ export default function TraspasosPage() {
             ...traspasosData.map(t => t.sucursal_destino_id)
           ])
         ]
-        const usuarioIds = [...new Set(traspasosData.map(t => t.usuario_id))]
+        const usuarioIds = [...new Set([
+          ...traspasosData.map(t => t.usuario_id),
+          ...traspasosData.filter(t => t.aceptado_por).map(t => t.aceptado_por)
+        ].filter(Boolean))]
         const traspasoIds = traspasosData.map(t => t.id)
 
         // Cargar sucursales
@@ -186,7 +202,8 @@ export default function TraspasosPage() {
               id: d.id,
               nombre_producto: d.nombre_producto,
               cantidad: d.cantidad,
-              costo_unitario: d.costo_unitario
+              costo_unitario: d.costo_unitario,
+              producto_origen_id: d.producto_origen_id
             }))
 
           const totalItems = detalles.reduce((sum, d) => sum + d.cantidad, 0)
@@ -195,12 +212,17 @@ export default function TraspasosPage() {
           return {
             id: traspaso.id,
             numero_traspaso: traspaso.numero_traspaso,
+            sucursal_origen_id: traspaso.sucursal_origen_id,
+            sucursal_destino_id: traspaso.sucursal_destino_id,
             sucursal_origen_nombre: sucursalesMap[traspaso.sucursal_origen_id] || 'Desconocida',
             sucursal_destino_nombre: sucursalesMap[traspaso.sucursal_destino_id] || 'Desconocida',
             usuario_nombre: usuariosMap[traspaso.usuario_id] || 'Desconocido',
+            aceptado_por_nombre: traspaso.aceptado_por ? (usuariosMap[traspaso.aceptado_por] || 'Desconocido') : null,
             estado: traspaso.estado,
             notas: traspaso.notas,
+            notas_destino: traspaso.notas_destino,
             created_at: traspaso.created_at,
+            aceptado_at: traspaso.aceptado_at,
             detalles,
             total_items: totalItems,
             total_costo: totalCosto
@@ -218,6 +240,37 @@ export default function TraspasosPage() {
       setLoading(false)
     }
   }
+
+  // Filtrar traspasos según la vista seleccionada
+  const traspasosFiltrados = useMemo(() => {
+    if (!usuario?.sucursal_id) return traspasos
+
+    switch (filtroVista) {
+      case 'enviados':
+        return traspasos.filter(t => t.sucursal_origen_id === usuario.sucursal_id)
+      case 'recibidos':
+        return traspasos.filter(t => t.sucursal_destino_id === usuario.sucursal_id)
+      case 'pendientes':
+        return traspasos.filter(t => 
+          t.sucursal_destino_id === usuario.sucursal_id && 
+          t.estado === 'pendiente'
+        )
+      default:
+        return traspasos.filter(t => 
+          t.sucursal_origen_id === usuario.sucursal_id || 
+          t.sucursal_destino_id === usuario.sucursal_id
+        )
+    }
+  }, [traspasos, filtroVista, usuario?.sucursal_id])
+
+  // Contar pendientes para badge
+  const cantidadPendientes = useMemo(() => {
+    if (!usuario?.sucursal_id) return 0
+    return traspasos.filter(t => 
+      t.sucursal_destino_id === usuario.sucursal_id && 
+      t.estado === 'pendiente'
+    ).length
+  }, [traspasos, usuario?.sucursal_id])
 
   // Agregar item al traspaso
   const agregarItem = () => {
@@ -290,7 +343,7 @@ export default function TraspasosPage() {
     setShowNuevoTraspaso(true)
   }
 
-  // Guardar traspaso
+  // Guardar traspaso (estado PENDIENTE - solo descuenta de origen)
   const guardarTraspaso = async () => {
     if (!usuario?.sucursal_id || !usuario?.empresa_id || !usuario?.id) return
 
@@ -319,7 +372,7 @@ export default function TraspasosPage() {
 
       const numeroTraspaso = (maxTraspaso?.numero_traspaso || 0) + 1
 
-      // Crear traspaso
+      // Crear traspaso con estado PENDIENTE
       const { data: traspaso, error: traspasoError } = await supabase
         .from('traspasos')
         .insert({
@@ -328,7 +381,7 @@ export default function TraspasosPage() {
           sucursal_destino_id: sucursalDestinoId,
           usuario_id: usuario.id,
           numero_traspaso: numeroTraspaso,
-          estado: 'completado',
+          estado: 'pendiente', // <-- CAMBIO IMPORTANTE: Estado pendiente
           notas: notas.trim() || null
         })
         .select()
@@ -336,102 +389,19 @@ export default function TraspasosPage() {
 
       if (traspasoError) throw traspasoError
 
-      // Procesar cada item
+      // Procesar cada item - SOLO descontar de origen
       for (const item of items) {
         // 1. Descontar stock de origen
-        await supabase
-          .from('productos')
-          .update({ 
-            stock_actual: supabase.rpc('decrement_stock', { 
-              row_id: item.producto_id, 
-              amount: item.cantidad 
-            })
-          })
-          .eq('id', item.producto_id)
-
-        // Alternativa: usar SQL directo
         await supabase.rpc('actualizar_stock_producto', {
           p_producto_id: item.producto_id,
           p_cantidad: -item.cantidad
         })
 
-        // 2. Buscar producto equivalente en destino (por código o nombre)
-        let productoDestinoId: string | null = null
-
-        // Buscar por código primero
-        if (item.codigo) {
-          const { data: prodDestino } = await supabase
-            .from('productos')
-            .select('id')
-            .eq('sucursal_id', sucursalDestinoId)
-            .eq('codigo', item.codigo)
-            .maybeSingle()
-          
-          if (prodDestino) {
-            productoDestinoId = prodDestino.id
-          }
-        }
-
-        // Si no se encontró por código, buscar por nombre exacto
-        if (!productoDestinoId) {
-          const { data: prodDestino } = await supabase
-            .from('productos')
-            .select('id')
-            .eq('sucursal_id', sucursalDestinoId)
-            .ilike('nombre', item.nombre)
-            .maybeSingle()
-          
-          if (prodDestino) {
-            productoDestinoId = prodDestino.id
-          }
-        }
-
-        // 3. Si existe en destino, sumar stock; si no, crear producto
-        if (productoDestinoId) {
-          await supabase.rpc('actualizar_stock_producto', {
-            p_producto_id: productoDestinoId,
-            p_cantidad: item.cantidad
-          })
-        } else {
-          // Obtener datos completos del producto origen
-          const { data: productoOrigen } = await supabase
-            .from('productos')
-            .select('*')
-            .eq('id', item.producto_id)
-            .single()
-
-          if (productoOrigen) {
-            const { data: nuevoProducto } = await supabase
-              .from('productos')
-              .insert({
-                sucursal_id: sucursalDestinoId,
-                categoria_id: productoOrigen.categoria_id,
-                codigo: productoOrigen.codigo,
-                codigo_barras: productoOrigen.codigo_barras,
-                nombre: productoOrigen.nombre,
-                descripcion: productoOrigen.descripcion,
-                marca: productoOrigen.marca,
-                unidad: productoOrigen.unidad,
-                precio_compra: productoOrigen.precio_compra,
-                precio_venta: productoOrigen.precio_venta,
-                stock_actual: item.cantidad,
-                stock_minimo: productoOrigen.stock_minimo,
-                stock_maximo: productoOrigen.stock_maximo,
-                imagen_url: productoOrigen.imagen_url,
-                activo: true
-              })
-              .select()
-              .single()
-
-            productoDestinoId = nuevoProducto?.id || null
-          }
-        }
-
-        // 4. Registrar detalle del traspaso
+        // 2. Registrar detalle del traspaso (sin producto_destino_id aún)
         await supabase.from('traspaso_detalles').insert({
           traspaso_id: traspaso.id,
           producto_origen_id: item.producto_id,
-          producto_destino_id: productoDestinoId,
+          producto_destino_id: null, // Se asignará al aceptar
           nombre_producto: item.nombre,
           cantidad: item.cantidad,
           costo_unitario: item.costo_unitario
@@ -440,10 +410,12 @@ export default function TraspasosPage() {
 
       setShowNuevoTraspaso(false)
       setTraspasoExitoso(numeroTraspaso)
+      setMensajeExito('¡Traspaso Enviado!')
       setShowExito(true)
       setTimeout(() => {
         setShowExito(false)
         setTraspasoExitoso(null)
+        setMensajeExito('')
       }, 3000)
 
       loadData()
@@ -456,12 +428,138 @@ export default function TraspasosPage() {
     }
   }
 
+  // ACEPTAR TRASPASO - Suma stock en destino
+  const aceptarTraspaso = async (traspaso: Traspaso) => {
+    if (!usuario?.id || !usuario?.sucursal_id) return
+    
+    if (!confirm(`¿Confirmas que recibiste todos los productos del Traspaso #${traspaso.numero_traspaso}?\n\nEsto agregará ${traspaso.total_items} unidades a tu inventario.`)) {
+      return
+    }
+
+    setProcesandoAceptacion(true)
+    setTraspasoSeleccionado(null)
+
+    try {
+      // Procesar cada detalle - crear o actualizar producto en destino
+      for (const detalle of traspaso.detalles) {
+        let productoDestinoId: string | null = null
+
+        // Obtener datos del producto origen
+        const { data: productoOrigen } = await supabase
+          .from('productos')
+          .select('*')
+          .eq('id', detalle.producto_origen_id)
+          .single()
+
+        if (!productoOrigen) continue
+
+        // Buscar producto equivalente en destino por código
+        if (productoOrigen.codigo) {
+          const { data: prodDestino } = await supabase
+            .from('productos')
+            .select('id')
+            .eq('sucursal_id', usuario.sucursal_id)
+            .eq('codigo', productoOrigen.codigo)
+            .maybeSingle()
+          
+          if (prodDestino) {
+            productoDestinoId = prodDestino.id
+          }
+        }
+
+        // Si no se encontró por código, buscar por nombre exacto
+        if (!productoDestinoId) {
+          const { data: prodDestino } = await supabase
+            .from('productos')
+            .select('id')
+            .eq('sucursal_id', usuario.sucursal_id)
+            .ilike('nombre', detalle.nombre_producto)
+            .maybeSingle()
+          
+          if (prodDestino) {
+            productoDestinoId = prodDestino.id
+          }
+        }
+
+        // Si existe en destino, sumar stock
+        if (productoDestinoId) {
+          await supabase.rpc('actualizar_stock_producto', {
+            p_producto_id: productoDestinoId,
+            p_cantidad: detalle.cantidad
+          })
+        } else {
+          // Si no existe, crear producto nuevo en destino
+          const { data: nuevoProducto } = await supabase
+            .from('productos')
+            .insert({
+              sucursal_id: usuario.sucursal_id,
+              categoria_id: productoOrigen.categoria_id,
+              codigo: productoOrigen.codigo,
+              codigo_barras: productoOrigen.codigo_barras,
+              nombre: productoOrigen.nombre,
+              descripcion: productoOrigen.descripcion,
+              marca: productoOrigen.marca,
+              unidad: productoOrigen.unidad,
+              precio_compra: productoOrigen.precio_compra,
+              precio_venta: productoOrigen.precio_venta,
+              stock_actual: detalle.cantidad,
+              stock_minimo: productoOrigen.stock_minimo,
+              stock_maximo: productoOrigen.stock_maximo,
+              imagen_url: productoOrigen.imagen_url,
+              activo: true
+            })
+            .select()
+            .single()
+
+          productoDestinoId = nuevoProducto?.id || null
+        }
+
+        // Actualizar detalle con el producto destino
+        if (productoDestinoId) {
+          await supabase
+            .from('traspaso_detalles')
+            .update({ producto_destino_id: productoDestinoId })
+            .eq('id', detalle.id)
+        }
+      }
+
+      // Marcar traspaso como aceptado
+      const { error: updateError } = await supabase
+        .from('traspasos')
+        .update({
+          estado: 'aceptado',
+          aceptado_por: usuario.id,
+          aceptado_at: new Date().toISOString()
+        })
+        .eq('id', traspaso.id)
+
+      if (updateError) throw updateError
+
+      setMensajeExito('¡Traspaso Aceptado!')
+      setTraspasoExitoso(traspaso.numero_traspaso)
+      setShowExito(true)
+      setTimeout(() => {
+        setShowExito(false)
+        setTraspasoExitoso(null)
+        setMensajeExito('')
+      }, 3000)
+
+      loadData()
+
+    } catch (err) {
+      console.error('Error aceptando traspaso:', err)
+      alert('Error al aceptar el traspaso. Intente nuevamente.')
+    } finally {
+      setProcesandoAceptacion(false)
+    }
+  }
+
   // Exportar a Excel
   const exportarExcel = () => {
-    if (traspasos.length === 0) return
+    if (traspasosFiltrados.length === 0) return
 
     const datosExcel: any[] = []
-    traspasos.forEach(traspaso => {
+    traspasosFiltrados.forEach(traspaso => {
       traspaso.detalles.forEach(detalle => {
         datosExcel.push({
           'Traspaso #': traspaso.numero_traspaso,
@@ -472,8 +570,10 @@ export default function TraspasosPage() {
           'Cantidad': detalle.cantidad,
           'Costo Unit.': detalle.costo_unitario,
           'Costo Total': detalle.cantidad * detalle.costo_unitario,
-          'Usuario': traspaso.usuario_nombre,
-          'Estado': traspaso.estado
+          'Enviado por': traspaso.usuario_nombre,
+          'Estado': traspaso.estado,
+          'Aceptado por': traspaso.aceptado_por_nombre || '-',
+          'Fecha Aceptación': traspaso.aceptado_at ? formatDateTime(traspaso.aceptado_at) : '-'
         })
       })
     })
@@ -482,6 +582,24 @@ export default function TraspasosPage() {
     const ws = XLSX.utils.json_to_sheet(datosExcel)
     XLSX.utils.book_append_sheet(wb, ws, 'Traspasos')
     XLSX.writeFile(wb, 'Traspasos.xlsx')
+  }
+
+  // Obtener color y etiqueta del estado
+  const getEstadoBadge = (estado: string) => {
+    switch (estado) {
+      case 'pendiente':
+        return { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Pendiente' }
+      case 'aceptado':
+        return { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Aceptado' }
+      case 'completado':
+        return { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Completado' }
+      case 'rechazado':
+        return { bg: 'bg-red-100', text: 'text-red-700', label: 'Rechazado' }
+      case 'anulado':
+        return { bg: 'bg-gray-100', text: 'text-gray-700', label: 'Anulado' }
+      default:
+        return { bg: 'bg-gray-100', text: 'text-gray-700', label: estado }
+    }
   }
 
   if (loading) {
@@ -522,8 +640,19 @@ export default function TraspasosPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">¡Traspaso Completado!</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">{mensajeExito || '¡Completado!'}</h2>
             <p className="text-emerald-600 text-lg font-medium">Traspaso #{traspasoExitoso}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Procesando aceptación */}
+      {procesandoAceptacion && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-8 text-center max-w-sm w-full">
+            <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-gray-700 font-medium">Procesando aceptación...</p>
+            <p className="text-gray-500 text-sm mt-1">Agregando productos al inventario</p>
           </div>
         </div>
       )}
@@ -536,7 +665,7 @@ export default function TraspasosPage() {
         <div className="flex gap-2">
           <button
             onClick={exportarExcel}
-            disabled={traspasos.length === 0}
+            disabled={traspasosFiltrados.length === 0}
             className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -569,13 +698,66 @@ export default function TraspasosPage() {
           </svg>
           Sucursal actual: <strong>{sucursalActual.nombre}</strong>
           {sucursales.length > 0 && (
-            <span className="ml-2">• {sucursales.length} sucursal(es) disponible(s) para traspasar</span>
+            <span className="ml-2">• {sucursales.length} sucursal(es) disponible(s)</span>
           )}
         </div>
       )}
 
+      {/* Filtros de vista */}
+      <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
+        <button
+          onClick={() => setFiltroVista('todos')}
+          className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${
+            filtroVista === 'todos' 
+              ? 'bg-emerald-500 text-white' 
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}
+        >
+          Todos
+        </button>
+        <button
+          onClick={() => setFiltroVista('pendientes')}
+          className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors flex items-center gap-2 ${
+            filtroVista === 'pendientes' 
+              ? 'bg-yellow-500 text-white' 
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}
+        >
+          Por recibir
+          {cantidadPendientes > 0 && (
+            <span className={`px-2 py-0.5 text-xs rounded-full ${
+              filtroVista === 'pendientes' 
+                ? 'bg-white text-yellow-600' 
+                : 'bg-yellow-500 text-white'
+            }`}>
+              {cantidadPendientes}
+            </span>
+          )}
+        </button>
+        <button
+          onClick={() => setFiltroVista('enviados')}
+          className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${
+            filtroVista === 'enviados' 
+              ? 'bg-blue-500 text-white' 
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}
+        >
+          Enviados
+        </button>
+        <button
+          onClick={() => setFiltroVista('recibidos')}
+          className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${
+            filtroVista === 'recibidos' 
+              ? 'bg-purple-500 text-white' 
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}
+        >
+          Recibidos
+        </button>
+      </div>
+
       {/* Lista de traspasos */}
-      {traspasos.length === 0 ? (
+      {traspasosFiltrados.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -583,42 +765,71 @@ export default function TraspasosPage() {
             </svg>
           </div>
           <h3 className="text-lg font-medium text-gray-900 mb-1">No hay traspasos</h3>
-          <p className="text-gray-500">No se han realizado traspasos entre sucursales</p>
+          <p className="text-gray-500">
+            {filtroVista === 'pendientes' 
+              ? 'No tienes traspasos pendientes por recibir'
+              : 'No se encontraron traspasos con este filtro'
+            }
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
-          {traspasos.map(traspaso => (
-            <div
-              key={traspaso.id}
-              onClick={() => setTraspasoSeleccionado(traspaso)}
-              className="bg-white rounded-xl border border-gray-100 p-4 cursor-pointer hover:shadow-md transition-shadow"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-900">Traspaso #{traspaso.numero_traspaso}</span>
-                    <span className={`px-2 py-0.5 text-xs rounded-full ${
-                      traspaso.estado === 'completado' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                    }`}>
-                      {traspaso.estado === 'completado' ? 'Completado' : 'Anulado'}
-                    </span>
+          {traspasosFiltrados.map(traspaso => {
+            const badge = getEstadoBadge(traspaso.estado)
+            const esDestinatario = traspaso.sucursal_destino_id === usuario?.sucursal_id
+            const puedeAceptar = esDestinatario && traspaso.estado === 'pendiente'
+
+            return (
+              <div
+                key={traspaso.id}
+                className={`bg-white rounded-xl border p-4 transition-shadow ${
+                  puedeAceptar 
+                    ? 'border-yellow-300 shadow-sm hover:shadow-md cursor-pointer' 
+                    : 'border-gray-100 hover:shadow-md cursor-pointer'
+                }`}
+                onClick={() => setTraspasoSeleccionado(traspaso)}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-gray-900">Traspaso #{traspaso.numero_traspaso}</span>
+                      <span className={`px-2 py-0.5 text-xs rounded-full ${badge.bg} ${badge.text}`}>
+                        {badge.label}
+                      </span>
+                      {esDestinatario && (
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-purple-100 text-purple-700">
+                          Para ti
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-1 text-sm text-gray-500">
+                      <span>{traspaso.sucursal_origen_nombre}</span>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                      </svg>
+                      <span>{traspaso.sucursal_destino_nombre}</span>
+                    </div>
+                    <p className="text-gray-400 text-xs mt-1">{formatDateTime(traspaso.created_at)}</p>
                   </div>
-                  <div className="flex items-center gap-2 mt-1 text-sm text-gray-500">
-                    <span>{traspaso.sucursal_origen_nombre}</span>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                    </svg>
-                    <span>{traspaso.sucursal_destino_nombre}</span>
+                  <div className="text-right">
+                    <p className="font-bold text-gray-900">{traspaso.total_items} unidades</p>
+                    <p className="text-sm text-gray-500">{formatCurrency(traspaso.total_costo)}</p>
+                    {puedeAceptar && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          aceptarTraspaso(traspaso)
+                        }}
+                        className="mt-2 px-3 py-1 bg-emerald-500 text-white text-sm rounded-lg hover:bg-emerald-600 font-medium"
+                      >
+                        Aceptar
+                      </button>
+                    )}
                   </div>
-                  <p className="text-gray-400 text-xs mt-1">{formatDateTime(traspaso.created_at)}</p>
-                </div>
-                <div className="text-right">
-                  <p className="font-bold text-gray-900">{traspaso.total_items} unidades</p>
-                  <p className="text-sm text-gray-500">{formatCurrency(traspaso.total_costo)}</p>
                 </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
@@ -643,6 +854,11 @@ export default function TraspasosPage() {
                   {error}
                 </div>
               )}
+
+              {/* Aviso de estado pendiente */}
+              <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-700 text-sm">
+                <strong>Nota:</strong> El traspaso quedará en estado <strong>pendiente</strong> hasta que la sucursal destino lo acepte.
+              </div>
 
               {/* Origen y Destino */}
               <div className="grid grid-cols-2 gap-4">
@@ -761,7 +977,7 @@ export default function TraspasosPage() {
                 disabled={guardando || items.length === 0 || !sucursalDestinoId}
                 className="flex-1 px-4 py-3 bg-emerald-500 text-white rounded-xl font-medium disabled:opacity-50"
               >
-                {guardando ? 'Procesando...' : 'Confirmar Traspaso'}
+                {guardando ? 'Enviando...' : 'Enviar Traspaso'}
               </button>
             </div>
           </div>
@@ -776,11 +992,14 @@ export default function TraspasosPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-bold text-gray-900">Traspaso #{traspasoSeleccionado.numero_traspaso}</h2>
-                  <span className={`inline-block mt-1 px-2 py-0.5 text-xs rounded-full ${
-                    traspasoSeleccionado.estado === 'completado' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                  }`}>
-                    {traspasoSeleccionado.estado === 'completado' ? 'Completado' : 'Anulado'}
-                  </span>
+                  {(() => {
+                    const badge = getEstadoBadge(traspasoSeleccionado.estado)
+                    return (
+                      <span className={`inline-block mt-1 px-2 py-0.5 text-xs rounded-full ${badge.bg} ${badge.text}`}>
+                        {badge.label}
+                      </span>
+                    )
+                  })()}
                 </div>
                 <button onClick={() => setTraspasoSeleccionado(null)} className="text-gray-400 hover:text-gray-600">
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -819,13 +1038,25 @@ export default function TraspasosPage() {
               {/* Info */}
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
-                  <span className="text-gray-500">Fecha</span>
+                  <span className="text-gray-500">Fecha envío</span>
                   <p className="font-medium">{formatDateTime(traspasoSeleccionado.created_at)}</p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Realizado por</span>
+                  <span className="text-gray-500">Enviado por</span>
                   <p className="font-medium">{traspasoSeleccionado.usuario_nombre}</p>
                 </div>
+                {traspasoSeleccionado.aceptado_at && (
+                  <>
+                    <div>
+                      <span className="text-gray-500">Fecha aceptación</span>
+                      <p className="font-medium">{formatDateTime(traspasoSeleccionado.aceptado_at)}</p>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">Aceptado por</span>
+                      <p className="font-medium">{traspasoSeleccionado.aceptado_por_nombre}</p>
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Productos */}
@@ -856,15 +1087,34 @@ export default function TraspasosPage() {
 
               {traspasoSeleccionado.notas && (
                 <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-700"><strong>Notas:</strong> {traspasoSeleccionado.notas}</p>
+                  <p className="text-sm text-gray-700"><strong>Notas del envío:</strong> {traspasoSeleccionado.notas}</p>
+                </div>
+              )}
+
+              {traspasoSeleccionado.notas_destino && (
+                <div className="p-3 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-blue-700"><strong>Notas de recepción:</strong> {traspasoSeleccionado.notas_destino}</p>
                 </div>
               )}
             </div>
 
-            <div className="p-6 border-t border-gray-100">
+            <div className="p-6 border-t border-gray-100 flex gap-3">
+              {traspasoSeleccionado.estado === 'pendiente' && 
+               traspasoSeleccionado.sucursal_destino_id === usuario?.sucursal_id && (
+                <button
+                  onClick={() => aceptarTraspaso(traspasoSeleccionado)}
+                  className="flex-1 px-4 py-3 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600"
+                >
+                  Aceptar Traspaso
+                </button>
+              )}
               <button
                 onClick={() => setTraspasoSeleccionado(null)}
-                className="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200"
+                className={`px-4 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 ${
+                  traspasoSeleccionado.estado === 'pendiente' && 
+                  traspasoSeleccionado.sucursal_destino_id === usuario?.sucursal_id 
+                    ? '' : 'flex-1'
+                }`}
               >
                 Cerrar
               </button>

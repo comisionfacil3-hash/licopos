@@ -82,17 +82,36 @@ export default function NuevoProductoPage() {
     }
   }
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      setImagen(file)
-      
-      // Crear preview
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setPreviewUrl(reader.result as string)
+      try {
+        // Importar y comprimir imagen
+        const { compressImage } = await import('@/lib/utils/image-compressor')
+        const compressedFile = await compressImage(file, {
+          maxWidth: 800,
+          maxHeight: 800,
+          quality: 0.7
+        })
+        
+        setImagen(compressedFile)
+        
+        // Crear preview
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setPreviewUrl(reader.result as string)
+        }
+        reader.readAsDataURL(compressedFile)
+      } catch (error) {
+        console.error('Error al comprimir imagen:', error)
+        // Si falla la compresión, usar la imagen original
+        setImagen(file)
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          setPreviewUrl(reader.result as string)
+        }
+        reader.readAsDataURL(file)
       }
-      reader.readAsDataURL(file)
     }
   }
 
