@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { formatCurrency } from '@/lib/utils/format'
@@ -10,32 +10,24 @@ import * as XLSX from 'xlsx'
 interface Sucursal {
   id: string
   nombre: string
+  empresa_id: string
 }
 
 interface Producto {
   id: string
   nombre: string
-  codigo: string
-  precio_compra: number
-  precio_venta: number
+  codigo: string | null
   stock_actual: number
+  precio_compra: number
 }
 
 interface ItemTraspaso {
   producto_id: string
   nombre: string
-  codigo: string
+  codigo: string | null
   cantidad: number
   costo_unitario: number
   stock_disponible: number
-}
-
-interface TraspasoDetalle {
-  id: string
-  nombre_producto: string
-  cantidad: number
-  costo_unitario: number
-  producto_origen_id: string
 }
 
 interface Traspaso {
@@ -43,18 +35,15 @@ interface Traspaso {
   numero_traspaso: number
   sucursal_origen_id: string
   sucursal_destino_id: string
-  sucursal_origen_nombre: string
-  sucursal_destino_nombre: string
-  usuario_nombre: string
-  aceptado_por_nombre: string | null
-  estado: 'pendiente' | 'aceptado' | 'completado' | 'rechazado' | 'anulado'
-  notas: string | null
-  notas_destino: string | null
-  created_at: string
-  aceptado_at: string | null
-  detalles: TraspasoDetalle[]
+  sucursal_origen?: { nombre: string }
+  sucursal_destino?: { nombre: string }
+  estado: 'pendiente' | 'completado' | 'cancelado'
   total_items: number
-  total_costo: number
+  costo_total: number
+  notas: string | null
+  created_at: string
+  usuario?: { nombre: string }
+  detalles: any[]
 }
 
 export default function TraspasosPage() {
@@ -62,298 +51,120 @@ export default function TraspasosPage() {
   const [sucursales, setSucursales] = useState<Sucursal[]>([])
   const [productos, setProductos] = useState<Producto[]>([])
   const [loading, setLoading] = useState(true)
-  const [sucursalActual, setSucursalActual] = useState<Sucursal | null>(null)
-  const [traspasoSeleccionado, setTraspasoSeleccionado] = useState<Traspaso | null>(null)
-  
-  // Estados para nuevo traspaso
   const [showNuevoTraspaso, setShowNuevoTraspaso] = useState(false)
-  const [sucursalDestinoId, setSucursalDestinoId] = useState('')
-  const [items, setItems] = useState<ItemTraspaso[]>([])
-  const [notas, setNotas] = useState('')
+  const [showExito, setShowExito] = useState(false)
+  const [mensajeExito, setMensajeExito] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
-  
-  // Estados para agregar item
-  const [productoSeleccionado, setProductoSeleccionado] = useState('')
-  const [cantidadItem, setCantidadItem] = useState('')
-  
-  // Estado para éxito
-  const [showExito, setShowExito] = useState(false)
-  const [traspasoExitoso, setTraspasoExitoso] = useState<number | null>(null)
-  const [mensajeExito, setMensajeExito] = useState('')
-  
-  // Permisos
-  const [tienePermiso, setTienePermiso] = useState(false)
 
-  // Filtro de vista
-  const [filtroVista, setFiltroVista] = useState<'todos' | 'enviados' | 'recibidos' | 'pendientes'>('todos')
-
-  // Estado para procesar aceptación
-  const [procesandoAceptacion, setProcesandoAceptacion] = useState(false)
+  // Formulario
+  const [sucursalDestino, setSucursalDestino] = useState('')
+  const [items, setItems] = useState<ItemTraspaso[]>([])
+  const [busqueda, setBusqueda] = useState('')
+  const [notas, setNotas] = useState('')
 
   const { usuario } = useAuth()
   const supabase = createClient()
 
   useEffect(() => {
-    if (usuario?.sucursal_id && usuario?.empresa_id) {
-      // Verificar si es gerente o admin
-      if (usuario.rol === 'gerente' || usuario.rol === 'admin') {
-        setTienePermiso(true)
-        loadData()
-      } else {
-        setTienePermiso(false)
-        setLoading(false)
-      }
+    if (usuario?.empresa_id) {
+      loadData()
     }
-  }, [usuario?.sucursal_id, usuario?.empresa_id, usuario?.rol])
+  }, [usuario?.empresa_id])
 
   const loadData = async () => {
-    if (!usuario?.sucursal_id || !usuario?.empresa_id) return
+    if (!usuario?.empresa_id || !usuario?.sucursal_id) return
 
     setLoading(true)
     try {
-      // Cargar sucursal actual
-      const { data: sucursalActualData } = await supabase
+      // Sucursales de la empresa (excepto la actual)
+      const { data: sucs } = await supabase
         .from('sucursales')
-        .select('id, nombre')
-        .eq('id', usuario.sucursal_id)
-        .single()
-
-      setSucursalActual(sucursalActualData)
-
-      // Cargar todas las sucursales de la empresa (excepto la actual)
-      const { data: sucursalesData } = await supabase
-        .from('sucursales')
-        .select('id, nombre')
+        .select('id, nombre, empresa_id')
         .eq('empresa_id', usuario.empresa_id)
         .eq('activa', true)
         .neq('id', usuario.sucursal_id)
         .order('nombre')
 
-      setSucursales(sucursalesData || [])
+      setSucursales(sucs || [])
 
-      // Cargar productos de la sucursal actual
-      const { data: productosData } = await supabase
+      // Productos de la sucursal actual
+      const { data: prods } = await supabase
         .from('productos')
-        .select('id, nombre, codigo, precio_compra, precio_venta, stock_actual')
+        .select('id, nombre, codigo, stock_actual, precio_compra')
         .eq('sucursal_id', usuario.sucursal_id)
         .eq('activo', true)
         .gt('stock_actual', 0)
         .order('nombre')
 
-      setProductos(productosData || [])
+      setProductos(prods || [])
 
-      // Cargar historial de traspasos de la empresa
-      const { data: traspasosData } = await supabase
+      // Traspasos
+      const { data: trasps } = await supabase
         .from('traspasos')
-        .select('*')
+        .select(`
+          *,
+          sucursal_origen:sucursales!traspasos_sucursal_origen_id_fkey(nombre),
+          sucursal_destino:sucursales!traspasos_sucursal_destino_id_fkey(nombre),
+          usuario:usuarios(nombre),
+          detalles:traspaso_detalles(*)
+        `)
         .eq('empresa_id', usuario.empresa_id)
+        .or(`sucursal_origen_id.eq.${usuario.sucursal_id},sucursal_destino_id.eq.${usuario.sucursal_id}`)
         .order('created_at', { ascending: false })
-        .limit(100)
+        .limit(50)
 
-      if (traspasosData && traspasosData.length > 0) {
-        // Obtener IDs únicos
-        const sucursalIds = [
-          ...new Set([
-            ...traspasosData.map(t => t.sucursal_origen_id),
-            ...traspasosData.map(t => t.sucursal_destino_id)
-          ])
-        ]
-        const usuarioIds = [...new Set([
-          ...traspasosData.map(t => t.usuario_id),
-          ...traspasosData.filter(t => t.aceptado_por).map(t => t.aceptado_por)
-        ].filter(Boolean))]
-        const traspasoIds = traspasosData.map(t => t.id)
-
-        // Cargar sucursales
-        let sucursalesMap: Record<string, string> = {}
-        if (sucursalIds.length > 0) {
-          const { data: sucData } = await supabase
-            .from('sucursales')
-            .select('id, nombre')
-            .in('id', sucursalIds)
-          if (sucData) {
-            sucData.forEach(s => { sucursalesMap[s.id] = s.nombre })
-          }
-        }
-
-        // Cargar usuarios
-        let usuariosMap: Record<string, string> = {}
-        if (usuarioIds.length > 0) {
-          const { data: usrData } = await supabase
-            .from('usuarios')
-            .select('id, nombre')
-            .in('id', usuarioIds)
-          if (usrData) {
-            usrData.forEach(u => { usuariosMap[u.id] = u.nombre })
-          }
-        }
-
-        // Cargar detalles
-        const { data: detallesData } = await supabase
-          .from('traspaso_detalles')
-          .select('*')
-          .in('traspaso_id', traspasoIds)
-
-        const traspasosCompletos: Traspaso[] = traspasosData.map(traspaso => {
-          const detalles = (detallesData || [])
-            .filter(d => d.traspaso_id === traspaso.id)
-            .map(d => ({
-              id: d.id,
-              nombre_producto: d.nombre_producto,
-              cantidad: d.cantidad,
-              costo_unitario: d.costo_unitario,
-              producto_origen_id: d.producto_origen_id
-            }))
-
-          const totalItems = detalles.reduce((sum, d) => sum + d.cantidad, 0)
-          const totalCosto = detalles.reduce((sum, d) => sum + (d.cantidad * d.costo_unitario), 0)
-
-          return {
-            id: traspaso.id,
-            numero_traspaso: traspaso.numero_traspaso,
-            sucursal_origen_id: traspaso.sucursal_origen_id,
-            sucursal_destino_id: traspaso.sucursal_destino_id,
-            sucursal_origen_nombre: sucursalesMap[traspaso.sucursal_origen_id] || 'Desconocida',
-            sucursal_destino_nombre: sucursalesMap[traspaso.sucursal_destino_id] || 'Desconocida',
-            usuario_nombre: usuariosMap[traspaso.usuario_id] || 'Desconocido',
-            aceptado_por_nombre: traspaso.aceptado_por ? (usuariosMap[traspaso.aceptado_por] || 'Desconocido') : null,
-            estado: traspaso.estado,
-            notas: traspaso.notas,
-            notas_destino: traspaso.notas_destino,
-            created_at: traspaso.created_at,
-            aceptado_at: traspaso.aceptado_at,
-            detalles,
-            total_items: totalItems,
-            total_costo: totalCosto
-          }
-        })
-
-        setTraspasos(traspasosCompletos)
-      } else {
-        setTraspasos([])
-      }
+      setTraspasos(trasps || [])
 
     } catch (err) {
-      console.error('Error cargando datos:', err)
+      console.error('Error:', err)
     } finally {
       setLoading(false)
     }
   }
 
-  // Filtrar traspasos según la vista seleccionada
-  const traspasosFiltrados = useMemo(() => {
-    if (!usuario?.sucursal_id) return traspasos
-
-    switch (filtroVista) {
-      case 'enviados':
-        return traspasos.filter(t => t.sucursal_origen_id === usuario.sucursal_id)
-      case 'recibidos':
-        return traspasos.filter(t => t.sucursal_destino_id === usuario.sucursal_id)
-      case 'pendientes':
-        return traspasos.filter(t => 
-          t.sucursal_destino_id === usuario.sucursal_id && 
-          t.estado === 'pendiente'
-        )
-      default:
-        return traspasos.filter(t => 
-          t.sucursal_origen_id === usuario.sucursal_id || 
-          t.sucursal_destino_id === usuario.sucursal_id
-        )
-    }
-  }, [traspasos, filtroVista, usuario?.sucursal_id])
-
-  // Contar pendientes para badge
-  const cantidadPendientes = useMemo(() => {
-    if (!usuario?.sucursal_id) return 0
-    return traspasos.filter(t => 
-      t.sucursal_destino_id === usuario.sucursal_id && 
-      t.estado === 'pendiente'
-    ).length
-  }, [traspasos, usuario?.sucursal_id])
-
-  // Agregar item al traspaso
-  const agregarItem = () => {
-    if (!productoSeleccionado) {
-      setError('Seleccione un producto')
-      return
-    }
-
-    const cantidad = parseInt(cantidadItem) || 0
-    if (cantidad <= 0) {
-      setError('Ingrese una cantidad válida')
-      return
-    }
-
-    const producto = productos.find(p => p.id === productoSeleccionado)
-    if (!producto) return
-
-    if (cantidad > producto.stock_actual) {
-      setError(`Stock insuficiente. Disponible: ${producto.stock_actual}`)
-      return
-    }
-
-    const existente = items.find(i => i.producto_id === productoSeleccionado)
-    if (existente) {
-      const nuevaCantidad = existente.cantidad + cantidad
-      if (nuevaCantidad > producto.stock_actual) {
-        setError(`Stock insuficiente. Disponible: ${producto.stock_actual}`)
-        return
-      }
-      setItems(prev => prev.map(i =>
-        i.producto_id === productoSeleccionado
-          ? { ...i, cantidad: nuevaCantidad }
-          : i
-      ))
-    } else {
-      setItems(prev => [...prev, {
-        producto_id: producto.id,
-        nombre: producto.nombre,
-        codigo: producto.codigo || '',
-        cantidad,
-        costo_unitario: producto.precio_compra,
-        stock_disponible: producto.stock_actual
-      }])
-    }
-
-    setProductoSeleccionado('')
-    setCantidadItem('')
-    setError('')
+  const mostrarExito = (mensaje: string) => {
+    setMensajeExito(mensaje)
+    setShowExito(true)
+    setTimeout(() => setShowExito(false), 2500)
   }
 
-  // Eliminar item
+  const agregarProducto = (producto: Producto) => {
+    if (items.find(i => i.producto_id === producto.id)) return
+
+    setItems(prev => [...prev, {
+      producto_id: producto.id,
+      nombre: producto.nombre,
+      codigo: producto.codigo,
+      cantidad: 1,
+      costo_unitario: producto.precio_compra,
+      stock_disponible: producto.stock_actual
+    }])
+    setBusqueda('')
+  }
+
+  const actualizarCantidad = (productoId: string, cantidad: number) => {
+    setItems(prev => prev.map(i =>
+      i.producto_id === productoId
+        ? { ...i, cantidad: Math.min(Math.max(1, cantidad), i.stock_disponible) }
+        : i
+    ))
+  }
+
   const eliminarItem = (productoId: string) => {
     setItems(prev => prev.filter(i => i.producto_id !== productoId))
   }
 
-  // Total del traspaso
-  const totalTraspaso = items.reduce((sum, item) => sum + (item.cantidad * item.costo_unitario), 0)
-  const totalUnidades = items.reduce((sum, item) => sum + item.cantidad, 0)
+  const totalItems = items.reduce((sum, i) => sum + i.cantidad, 0)
+  const costoTotal = items.reduce((sum, i) => sum + (i.cantidad * i.costo_unitario), 0)
 
-  // Abrir modal nuevo traspaso
-  const abrirNuevoTraspaso = () => {
-    if (sucursales.length === 0) {
-      setError('No hay otras sucursales disponibles para traspasar')
-      return
-    }
-    setItems([])
-    setSucursalDestinoId('')
-    setNotas('')
-    setError('')
-    setShowNuevoTraspaso(true)
-  }
-
-  // Guardar traspaso (estado PENDIENTE - solo descuenta de origen)
   const guardarTraspaso = async () => {
-    if (!usuario?.sucursal_id || !usuario?.empresa_id || !usuario?.id) return
-
-    if (!sucursalDestinoId) {
-      setError('Seleccione la sucursal destino')
+    if (!sucursalDestino) {
+      setError('Selecciona una sucursal destino')
       return
     }
-
     if (items.length === 0) {
-      setError('Agregue al menos un producto')
+      setError('Agrega al menos un producto')
       return
     }
 
@@ -362,46 +173,40 @@ export default function TraspasosPage() {
 
     try {
       // Obtener número de traspaso
-      const { data: maxTraspaso } = await supabase
-        .from('traspasos')
-        .select('numero_traspaso')
-        .eq('empresa_id', usuario.empresa_id)
-        .order('numero_traspaso', { ascending: false })
-        .limit(1)
-        .maybeSingle()
+      const { data: numData } = await supabase.rpc('get_next_traspaso_number', {
+        p_empresa_id: usuario?.empresa_id
+      })
+      const numeroTraspaso = numData || 1
 
-      const numeroTraspaso = (maxTraspaso?.numero_traspaso || 0) + 1
-
-      // Crear traspaso con estado PENDIENTE
-      const { data: traspaso, error: traspasoError } = await supabase
+      // Crear traspaso
+      const { data: traspaso, error: traspError } = await supabase
         .from('traspasos')
         .insert({
-          empresa_id: usuario.empresa_id,
-          sucursal_origen_id: usuario.sucursal_id,
-          sucursal_destino_id: sucursalDestinoId,
-          usuario_id: usuario.id,
+          empresa_id: usuario?.empresa_id,
+          sucursal_origen_id: usuario?.sucursal_id,
+          sucursal_destino_id: sucursalDestino,
+          usuario_id: usuario?.id,
           numero_traspaso: numeroTraspaso,
-          estado: 'pendiente', // <-- CAMBIO IMPORTANTE: Estado pendiente
-          notas: notas.trim() || null
+          total_items: totalItems,
+          costo_total: costoTotal,
+          estado: 'pendiente',
+          notas: notas || null
         })
         .select()
         .single()
 
-      if (traspasoError) throw traspasoError
+      if (traspError) throw traspError
 
-      // Procesar cada item - SOLO descontar de origen
+      // Crear detalles y actualizar stock
       for (const item of items) {
-        // 1. Descontar stock de origen
         await supabase.rpc('actualizar_stock_producto', {
           p_producto_id: item.producto_id,
           p_cantidad: -item.cantidad
         })
 
-        // 2. Registrar detalle del traspaso (sin producto_destino_id aún)
         await supabase.from('traspaso_detalles').insert({
           traspaso_id: traspaso.id,
           producto_origen_id: item.producto_id,
-          producto_destino_id: null, // Se asignará al aceptar
           nombre_producto: item.nombre,
           cantidad: item.cantidad,
           costo_unitario: item.costo_unitario
@@ -409,198 +214,54 @@ export default function TraspasosPage() {
       }
 
       setShowNuevoTraspaso(false)
-      setTraspasoExitoso(numeroTraspaso)
-      setMensajeExito('¡Traspaso Enviado!')
-      setShowExito(true)
-      setTimeout(() => {
-        setShowExito(false)
-        setTraspasoExitoso(null)
-        setMensajeExito('')
-      }, 3000)
-
+      setSucursalDestino('')
+      setItems([])
+      setNotas('')
+      mostrarExito(`¡Traspaso #${numeroTraspaso} enviado!`)
       loadData()
 
     } catch (err) {
-      console.error('Error guardando traspaso:', err)
+      console.error('Error:', err)
       setError('Error al procesar el traspaso')
     } finally {
       setGuardando(false)
     }
   }
 
-  // ACEPTAR TRASPASO - Suma stock en destino
-  const aceptarTraspaso = async (traspaso: Traspaso) => {
-    if (!usuario?.id || !usuario?.sucursal_id) return
-    
-    if (!confirm(`¿Confirmas que recibiste todos los productos del Traspaso #${traspaso.numero_traspaso}?\n\nEsto agregará ${traspaso.total_items} unidades a tu inventario.`)) {
-      return
-    }
-
-    setProcesandoAceptacion(true)
-    setTraspasoSeleccionado(null)
-
-    try {
-      // Procesar cada detalle - crear o actualizar producto en destino
-      for (const detalle of traspaso.detalles) {
-        let productoDestinoId: string | null = null
-
-        // Obtener datos del producto origen
-        const { data: productoOrigen } = await supabase
-          .from('productos')
-          .select('*')
-          .eq('id', detalle.producto_origen_id)
-          .single()
-
-        if (!productoOrigen) continue
-
-        // Buscar producto equivalente en destino por código
-        if (productoOrigen.codigo) {
-          const { data: prodDestino } = await supabase
-            .from('productos')
-            .select('id')
-            .eq('sucursal_id', usuario.sucursal_id)
-            .eq('codigo', productoOrigen.codigo)
-            .maybeSingle()
-          
-          if (prodDestino) {
-            productoDestinoId = prodDestino.id
-          }
-        }
-
-        // Si no se encontró por código, buscar por nombre exacto
-        if (!productoDestinoId) {
-          const { data: prodDestino } = await supabase
-            .from('productos')
-            .select('id')
-            .eq('sucursal_id', usuario.sucursal_id)
-            .ilike('nombre', detalle.nombre_producto)
-            .maybeSingle()
-          
-          if (prodDestino) {
-            productoDestinoId = prodDestino.id
-          }
-        }
-
-        // Si existe en destino, sumar stock
-        if (productoDestinoId) {
-          await supabase.rpc('actualizar_stock_producto', {
-            p_producto_id: productoDestinoId,
-            p_cantidad: detalle.cantidad
-          })
-        } else {
-          // Si no existe, crear producto nuevo en destino
-          const { data: nuevoProducto } = await supabase
-            .from('productos')
-            .insert({
-              sucursal_id: usuario.sucursal_id,
-              categoria_id: productoOrigen.categoria_id,
-              codigo: productoOrigen.codigo,
-              codigo_barras: productoOrigen.codigo_barras,
-              nombre: productoOrigen.nombre,
-              descripcion: productoOrigen.descripcion,
-              marca: productoOrigen.marca,
-              unidad: productoOrigen.unidad,
-              precio_compra: productoOrigen.precio_compra,
-              precio_venta: productoOrigen.precio_venta,
-              stock_actual: detalle.cantidad,
-              stock_minimo: productoOrigen.stock_minimo,
-              stock_maximo: productoOrigen.stock_maximo,
-              imagen_url: productoOrigen.imagen_url,
-              activo: true
-            })
-            .select()
-            .single()
-
-          productoDestinoId = nuevoProducto?.id || null
-        }
-
-        // Actualizar detalle con el producto destino
-        if (productoDestinoId) {
-          await supabase
-            .from('traspaso_detalles')
-            .update({ producto_destino_id: productoDestinoId })
-            .eq('id', detalle.id)
-        }
-      }
-
-      // Marcar traspaso como aceptado
-      const { error: updateError } = await supabase
-        .from('traspasos')
-        .update({
-          estado: 'aceptado',
-          aceptado_por: usuario.id,
-          aceptado_at: new Date().toISOString()
-        })
-        .eq('id', traspaso.id)
-
-      if (updateError) throw updateError
-
-      setMensajeExito('¡Traspaso Aceptado!')
-      setTraspasoExitoso(traspaso.numero_traspaso)
-      setShowExito(true)
-      setTimeout(() => {
-        setShowExito(false)
-        setTraspasoExitoso(null)
-        setMensajeExito('')
-      }, 3000)
-
-      loadData()
-
-    } catch (err) {
-      console.error('Error aceptando traspaso:', err)
-      alert('Error al aceptar el traspaso. Intente nuevamente.')
-    } finally {
-      setProcesandoAceptacion(false)
-    }
-  }
-
-  // Exportar a Excel
   const exportarExcel = () => {
-    if (traspasosFiltrados.length === 0) return
+    if (traspasos.length === 0) return
 
-    const datosExcel: any[] = []
-    traspasosFiltrados.forEach(traspaso => {
-      traspaso.detalles.forEach(detalle => {
-        datosExcel.push({
-          'Traspaso #': traspaso.numero_traspaso,
-          'Fecha': formatDateTime(traspaso.created_at),
-          'Origen': traspaso.sucursal_origen_nombre,
-          'Destino': traspaso.sucursal_destino_nombre,
-          'Producto': detalle.nombre_producto,
-          'Cantidad': detalle.cantidad,
-          'Costo Unit.': detalle.costo_unitario,
-          'Costo Total': detalle.cantidad * detalle.costo_unitario,
-          'Enviado por': traspaso.usuario_nombre,
-          'Estado': traspaso.estado,
-          'Aceptado por': traspaso.aceptado_por_nombre || '-',
-          'Fecha Aceptación': traspaso.aceptado_at ? formatDateTime(traspaso.aceptado_at) : '-'
-        })
-      })
-    })
+    const data = traspasos.map(t => ({
+      'N° Traspaso': t.numero_traspaso,
+      'Fecha': formatDateTime(t.created_at),
+      'Origen': t.sucursal_origen?.nombre || '',
+      'Destino': t.sucursal_destino?.nombre || '',
+      'Items': t.total_items,
+      'Costo Total': t.costo_total,
+      'Estado': t.estado === 'pendiente' ? 'Pendiente' : t.estado === 'completado' ? 'Completado' : 'Cancelado',
+      'Usuario': t.usuario?.nombre || '',
+      'Notas': t.notas || ''
+    }))
 
+    const ws = XLSX.utils.json_to_sheet(data)
     const wb = XLSX.utils.book_new()
-    const ws = XLSX.utils.json_to_sheet(datosExcel)
     XLSX.utils.book_append_sheet(wb, ws, 'Traspasos')
-    XLSX.writeFile(wb, 'Traspasos.xlsx')
+
+    // Ajustar ancho de columnas
+    ws['!cols'] = [
+      { wch: 12 }, { wch: 18 }, { wch: 20 }, { wch: 20 },
+      { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 30 }
+    ]
+
+    XLSX.writeFile(wb, `traspasos_${new Date().toISOString().split('T')[0]}.xlsx`)
   }
 
-  // Obtener color y etiqueta del estado
-  const getEstadoBadge = (estado: string) => {
-    switch (estado) {
-      case 'pendiente':
-        return { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Pendiente' }
-      case 'aceptado':
-        return { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Aceptado' }
-      case 'completado':
-        return { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Completado' }
-      case 'rechazado':
-        return { bg: 'bg-red-100', text: 'text-red-700', label: 'Rechazado' }
-      case 'anulado':
-        return { bg: 'bg-gray-100', text: 'text-gray-700', label: 'Anulado' }
-      default:
-        return { bg: 'bg-gray-100', text: 'text-gray-700', label: estado }
-    }
-  }
+  const productosFiltrados = busqueda
+    ? productos.filter(p =>
+        p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+        p.codigo?.toLowerCase().includes(busqueda.toLowerCase())
+      )
+    : []
 
   if (loading) {
     return (
@@ -613,239 +274,107 @@ export default function TraspasosPage() {
     )
   }
 
-  if (!tienePermiso) {
-    return (
-      <div className="p-4 max-w-4xl mx-auto">
-        <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-1">Acceso restringido</h3>
-          <p className="text-gray-500">Solo los gerentes pueden realizar traspasos entre sucursales.</p>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="p-4 pb-24 max-w-4xl mx-auto">
-      {/* Mensaje de éxito */}
+      {/* Modal Éxito */}
       {showExito && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-8 text-center max-w-sm w-full animate-bounce-in">
-            <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-10 h-10 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">{mensajeExito || '¡Completado!'}</h2>
-            <p className="text-emerald-600 text-lg font-medium">Traspaso #{traspasoExitoso}</p>
+            <h2 className="text-xl font-bold text-gray-900">{mensajeExito}</h2>
           </div>
         </div>
       )}
 
-      {/* Procesando aceptación */}
-      {procesandoAceptacion && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-8 text-center max-w-sm w-full">
-            <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-gray-700 font-medium">Procesando aceptación...</p>
-            <p className="text-gray-500 text-sm mt-1">Agregando productos al inventario</p>
-          </div>
-        </div>
-      )}
-
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Traspasos</h1>
-          <p className="text-gray-500 text-sm">Transferir productos entre sucursales</p>
+          <p className="text-gray-500 text-sm">Entre sucursales de tu empresa</p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={exportarExcel}
-            disabled={traspasosFiltrados.length === 0}
-            className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+            disabled={traspasos.length === 0}
+            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-xl font-medium hover:bg-gray-200 disabled:opacity-50 flex items-center gap-2"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
+            <span className="hidden sm:inline">Exportar</span>
           </button>
           <button
-            onClick={abrirNuevoTraspaso}
-            className="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-medium flex items-center gap-2"
+            onClick={() => { setError(''); setShowNuevoTraspaso(true) }}
+            className="px-4 py-2 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600 flex items-center gap-2"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
-            Nuevo Traspaso
+            Nuevo
           </button>
         </div>
-      </div>
-
-      {error && !showNuevoTraspaso && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* Info sucursal actual */}
-      {sucursalActual && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-sm flex items-center gap-2">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-          </svg>
-          Sucursal actual: <strong>{sucursalActual.nombre}</strong>
-          {sucursales.length > 0 && (
-            <span className="ml-2">• {sucursales.length} sucursal(es) disponible(s)</span>
-          )}
-        </div>
-      )}
-
-      {/* Filtros de vista */}
-      <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
-        <button
-          onClick={() => setFiltroVista('todos')}
-          className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${
-            filtroVista === 'todos' 
-              ? 'bg-emerald-500 text-white' 
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          Todos
-        </button>
-        <button
-          onClick={() => setFiltroVista('pendientes')}
-          className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors flex items-center gap-2 ${
-            filtroVista === 'pendientes' 
-              ? 'bg-yellow-500 text-white' 
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          Por recibir
-          {cantidadPendientes > 0 && (
-            <span className={`px-2 py-0.5 text-xs rounded-full ${
-              filtroVista === 'pendientes' 
-                ? 'bg-white text-yellow-600' 
-                : 'bg-yellow-500 text-white'
-            }`}>
-              {cantidadPendientes}
-            </span>
-          )}
-        </button>
-        <button
-          onClick={() => setFiltroVista('enviados')}
-          className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${
-            filtroVista === 'enviados' 
-              ? 'bg-blue-500 text-white' 
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          Enviados
-        </button>
-        <button
-          onClick={() => setFiltroVista('recibidos')}
-          className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-colors ${
-            filtroVista === 'recibidos' 
-              ? 'bg-purple-500 text-white' 
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          Recibidos
-        </button>
       </div>
 
       {/* Lista de traspasos */}
-      {traspasosFiltrados.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
+      <div className="space-y-3">
+        {traspasos.map((traspaso) => (
+          <div key={traspaso.id} className="bg-white rounded-xl border border-gray-100 p-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-gray-900">Traspaso #{traspaso.numero_traspaso}</span>
+                <span className={`px-2 py-0.5 text-xs rounded-full ${
+                  traspaso.estado === 'completado' ? 'bg-green-100 text-green-700' :
+                  traspaso.estado === 'pendiente' ? 'bg-amber-100 text-amber-700' :
+                  'bg-gray-100 text-gray-700'
+                }`}>
+                  {traspaso.estado === 'completado' ? 'Completado' : traspaso.estado === 'pendiente' ? 'Pendiente' : 'Cancelado'}
+                </span>
+              </div>
+              <span className="text-sm text-gray-500">{formatDateTime(traspaso.created_at)}</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">De:</span>
+                <span className="font-medium text-gray-900">{traspaso.sucursal_origen?.nombre}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500">A:</span>
+                <span className="font-medium text-gray-900">{traspaso.sucursal_destino?.nombre}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+              <span className="text-sm text-gray-500">{traspaso.total_items} productos</span>
+              <span className="font-medium text-emerald-600">{formatCurrency(traspaso.costo_total)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {traspasos.length === 0 && (
+        <div className="text-center py-12">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
             </svg>
           </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-1">No hay traspasos</h3>
-          <p className="text-gray-500">
-            {filtroVista === 'pendientes' 
-              ? 'No tienes traspasos pendientes por recibir'
-              : 'No se encontraron traspasos con este filtro'
-            }
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {traspasosFiltrados.map(traspaso => {
-            const badge = getEstadoBadge(traspaso.estado)
-            const esDestinatario = traspaso.sucursal_destino_id === usuario?.sucursal_id
-            const puedeAceptar = esDestinatario && traspaso.estado === 'pendiente'
-
-            return (
-              <div
-                key={traspaso.id}
-                className={`bg-white rounded-xl border p-4 transition-shadow ${
-                  puedeAceptar 
-                    ? 'border-yellow-300 shadow-sm hover:shadow-md cursor-pointer' 
-                    : 'border-gray-100 hover:shadow-md cursor-pointer'
-                }`}
-                onClick={() => setTraspasoSeleccionado(traspaso)}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-gray-900">Traspaso #{traspaso.numero_traspaso}</span>
-                      <span className={`px-2 py-0.5 text-xs rounded-full ${badge.bg} ${badge.text}`}>
-                        {badge.label}
-                      </span>
-                      {esDestinatario && (
-                        <span className="px-2 py-0.5 text-xs rounded-full bg-purple-100 text-purple-700">
-                          Para ti
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 mt-1 text-sm text-gray-500">
-                      <span>{traspaso.sucursal_origen_nombre}</span>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                      </svg>
-                      <span>{traspaso.sucursal_destino_nombre}</span>
-                    </div>
-                    <p className="text-gray-400 text-xs mt-1">{formatDateTime(traspaso.created_at)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-bold text-gray-900">{traspaso.total_items} unidades</p>
-                    <p className="text-sm text-gray-500">{formatCurrency(traspaso.total_costo)}</p>
-                    {puedeAceptar && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          aceptarTraspaso(traspaso)
-                        }}
-                        className="mt-2 px-3 py-1 bg-emerald-500 text-white text-sm rounded-lg hover:bg-emerald-600 font-medium"
-                      >
-                        Aceptar
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
+          <h3 className="text-lg font-medium text-gray-900">No hay traspasos</h3>
+          <p className="text-gray-500">Crea tu primer traspaso entre sucursales</p>
         </div>
       )}
 
-      {/* Modal nuevo traspaso */}
+      {/* Modal Nuevo Traspaso */}
       {showNuevoTraspaso && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-100">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-gray-900">Nuevo Traspaso</h2>
-                <button onClick={() => setShowNuevoTraspaso(false)} className="text-gray-400 hover:text-gray-600">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
+              <h2 className="text-xl font-bold text-gray-900">Nuevo Traspaso</h2>
+              <p className="text-sm text-gray-500">Envía productos a otra sucursal</p>
             </div>
 
             <div className="p-6 space-y-4">
@@ -855,99 +384,90 @@ export default function TraspasosPage() {
                 </div>
               )}
 
-              {/* Aviso de estado pendiente */}
-              <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-700 text-sm">
-                <strong>Nota:</strong> El traspaso quedará en estado <strong>pendiente</strong> hasta que la sucursal destino lo acepte.
+              {/* Sucursal destino */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Sucursal destino</label>
+                <select
+                  value={sucursalDestino}
+                  onChange={(e) => setSucursalDestino(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                >
+                  <option value="">Seleccionar sucursal</option>
+                  {sucursales.map(s => (
+                    <option key={s.id} value={s.id}>{s.nombre}</option>
+                  ))}
+                </select>
               </div>
 
-              {/* Origen y Destino */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Origen</label>
-                  <div className="px-4 py-2 bg-gray-100 rounded-xl text-gray-700">
-                    {sucursalActual?.nombre}
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Destino *</label>
-                  <select
-                    value={sucursalDestinoId}
-                    onChange={e => setSucursalDestinoId(e.target.value)}
-                    className="w-full px-4 py-2 border border-gray-200 rounded-xl bg-white"
-                  >
-                    <option value="">Seleccionar...</option>
-                    {sucursales.map(suc => (
-                      <option key={suc.id} value={suc.id}>{suc.nombre}</option>
+              {/* Buscar productos */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Agregar productos</label>
+                <input
+                  type="text"
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                  placeholder="Buscar por nombre o código..."
+                />
+                {productosFiltrados.length > 0 && (
+                  <div className="mt-2 bg-gray-50 rounded-xl p-2 max-h-40 overflow-y-auto">
+                    {productosFiltrados.slice(0, 5).map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => agregarProducto(p)}
+                        className="w-full text-left px-3 py-2 hover:bg-white rounded-lg flex justify-between items-center"
+                      >
+                        <span className="text-sm font-medium text-gray-900">{p.nombre}</span>
+                        <span className="text-xs text-gray-500">Stock: {p.stock_actual}</span>
+                      </button>
                     ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Agregar productos */}
-              <div className="border border-gray-200 rounded-xl p-4">
-                <h3 className="font-medium text-gray-900 mb-3">Agregar producto</h3>
-                <div className="space-y-2">
-                  <select
-                    value={productoSeleccionado}
-                    onChange={e => setProductoSeleccionado(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-white text-sm"
-                  >
-                    <option value="">Seleccionar producto...</option>
-                    {productos.map(prod => (
-                      <option key={prod.id} value={prod.id}>
-                        {prod.nombre} (Stock: {prod.stock_actual})
-                      </option>
-                    ))}
-                  </select>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      value={cantidadItem}
-                      onChange={e => setCantidadItem(e.target.value)}
-                      placeholder="Cantidad"
-                      className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm"
-                      min="1"
-                    />
-                    <button
-                      onClick={agregarItem}
-                      className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium"
-                    >
-                      Agregar
-                    </button>
                   </div>
-                </div>
+                )}
               </div>
 
-              {/* Lista de items */}
+              {/* Items seleccionados */}
               {items.length > 0 && (
-                <div className="space-y-2">
-                  <h3 className="font-medium text-gray-900">Productos a traspasar ({items.length})</h3>
-                  {items.map(item => (
-                    <div key={item.producto_id} className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
-                      <div className="flex-1">
-                        <p className="font-medium text-sm text-gray-900">{item.nombre}</p>
-                        <p className="text-xs text-gray-500">
-                          {item.cantidad} unidades × {formatCurrency(item.costo_unitario)}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-900">
-                          {formatCurrency(item.cantidad * item.costo_unitario)}
-                        </span>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Productos a traspasar</label>
+                  <div className="space-y-2">
+                    {items.map(item => (
+                      <div key={item.producto_id} className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-gray-900 truncate">{item.nombre}</p>
+                          <p className="text-xs text-gray-500">Stock: {item.stock_disponible}</p>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => actualizarCantidad(item.producto_id, item.cantidad - 1)}
+                            className="w-8 h-8 bg-white border rounded-lg flex items-center justify-center"
+                          >
+                            -
+                          </button>
+                          <input
+                            type="number"
+                            value={item.cantidad}
+                            onChange={(e) => actualizarCantidad(item.producto_id, parseInt(e.target.value) || 1)}
+                            className="w-14 text-center border rounded-lg py-1"
+                            min="1"
+                            max={item.stock_disponible}
+                          />
+                          <button
+                            onClick={() => actualizarCantidad(item.producto_id, item.cantidad + 1)}
+                            className="w-8 h-8 bg-white border rounded-lg flex items-center justify-center"
+                          >
+                            +
+                          </button>
+                        </div>
                         <button
                           onClick={() => eliminarItem(item.producto_id)}
-                          className="text-red-500 hover:text-red-700"
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
                         >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                           </svg>
                         </button>
                       </div>
-                    </div>
-                  ))}
-                  <div className="flex justify-between font-bold text-lg pt-2 border-t">
-                    <span>Total: {totalUnidades} unidades</span>
-                    <span>{formatCurrency(totalTraspaso)}</span>
+                    ))}
                   </div>
                 </div>
               )}
@@ -957,166 +477,46 @@ export default function TraspasosPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
                 <textarea
                   value={notas}
-                  onChange={e => setNotas(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl resize-none"
+                  onChange={(e) => setNotas(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none resize-none"
                   rows={2}
-                  placeholder="Observaciones del traspaso..."
+                  placeholder="Observaciones..."
                 />
               </div>
+
+              {/* Resumen */}
+              {items.length > 0 && (
+                <div className="bg-emerald-50 rounded-xl p-4">
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="text-gray-600">Total productos:</span>
+                    <span className="font-medium">{totalItems} unidades</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Costo total:</span>
+                    <span className="font-bold text-emerald-600">{formatCurrency(costoTotal)}</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="p-6 border-t border-gray-100 flex gap-3">
               <button
-                onClick={() => setShowNuevoTraspaso(false)}
-                className="flex-1 px-4 py-3 border border-gray-200 text-gray-700 rounded-xl"
+                onClick={() => {
+                  setShowNuevoTraspaso(false)
+                  setItems([])
+                  setSucursalDestino('')
+                  setNotas('')
+                }}
+                className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50"
               >
                 Cancelar
               </button>
               <button
                 onClick={guardarTraspaso}
-                disabled={guardando || items.length === 0 || !sucursalDestinoId}
-                className="flex-1 px-4 py-3 bg-emerald-500 text-white rounded-xl font-medium disabled:opacity-50"
+                disabled={guardando}
+                className="flex-1 px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50"
               >
                 {guardando ? 'Enviando...' : 'Enviar Traspaso'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal detalle traspaso */}
-      {traspasoSeleccionado && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-100">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-bold text-gray-900">Traspaso #{traspasoSeleccionado.numero_traspaso}</h2>
-                  {(() => {
-                    const badge = getEstadoBadge(traspasoSeleccionado.estado)
-                    return (
-                      <span className={`inline-block mt-1 px-2 py-0.5 text-xs rounded-full ${badge.bg} ${badge.text}`}>
-                        {badge.label}
-                      </span>
-                    )
-                  })()}
-                </div>
-                <button onClick={() => setTraspasoSeleccionado(null)} className="text-gray-400 hover:text-gray-600">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-4">
-              {/* Ruta del traspaso */}
-              <div className="flex items-center justify-center gap-4 p-4 bg-gray-50 rounded-xl">
-                <div className="text-center">
-                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                    <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                    </svg>
-                  </div>
-                  <p className="text-sm font-medium text-gray-900">{traspasoSeleccionado.sucursal_origen_nombre}</p>
-                  <p className="text-xs text-gray-500">Origen</p>
-                </div>
-                <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                </svg>
-                <div className="text-center">
-                  <div className="w-12 h-12 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-2">
-                    <svg className="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                    </svg>
-                  </div>
-                  <p className="text-sm font-medium text-gray-900">{traspasoSeleccionado.sucursal_destino_nombre}</p>
-                  <p className="text-xs text-gray-500">Destino</p>
-                </div>
-              </div>
-
-              {/* Info */}
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <span className="text-gray-500">Fecha envío</span>
-                  <p className="font-medium">{formatDateTime(traspasoSeleccionado.created_at)}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500">Enviado por</span>
-                  <p className="font-medium">{traspasoSeleccionado.usuario_nombre}</p>
-                </div>
-                {traspasoSeleccionado.aceptado_at && (
-                  <>
-                    <div>
-                      <span className="text-gray-500">Fecha aceptación</span>
-                      <p className="font-medium">{formatDateTime(traspasoSeleccionado.aceptado_at)}</p>
-                    </div>
-                    <div>
-                      <span className="text-gray-500">Aceptado por</span>
-                      <p className="font-medium">{traspasoSeleccionado.aceptado_por_nombre}</p>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Productos */}
-              <div className="border-t border-gray-100 pt-4">
-                <h3 className="font-medium text-gray-900 mb-3">Productos ({traspasoSeleccionado.detalles.length})</h3>
-                <div className="space-y-2">
-                  {traspasoSeleccionado.detalles.map(detalle => (
-                    <div key={detalle.id} className="flex justify-between items-start p-3 bg-gray-50 rounded-lg">
-                      <div>
-                        <p className="font-medium text-gray-900">{detalle.nombre_producto}</p>
-                        <p className="text-xs text-gray-500">
-                          {detalle.cantidad} × {formatCurrency(detalle.costo_unitario)}
-                        </p>
-                      </div>
-                      <p className="font-medium text-gray-900">
-                        {formatCurrency(detalle.cantidad * detalle.costo_unitario)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Totales */}
-              <div className="flex justify-between font-bold text-lg pt-4 border-t border-gray-100">
-                <span>Total: {traspasoSeleccionado.total_items} unidades</span>
-                <span>{formatCurrency(traspasoSeleccionado.total_costo)}</span>
-              </div>
-
-              {traspasoSeleccionado.notas && (
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-700"><strong>Notas del envío:</strong> {traspasoSeleccionado.notas}</p>
-                </div>
-              )}
-
-              {traspasoSeleccionado.notas_destino && (
-                <div className="p-3 bg-blue-50 rounded-lg">
-                  <p className="text-sm text-blue-700"><strong>Notas de recepción:</strong> {traspasoSeleccionado.notas_destino}</p>
-                </div>
-              )}
-            </div>
-
-            <div className="p-6 border-t border-gray-100 flex gap-3">
-              {traspasoSeleccionado.estado === 'pendiente' && 
-               traspasoSeleccionado.sucursal_destino_id === usuario?.sucursal_id && (
-                <button
-                  onClick={() => aceptarTraspaso(traspasoSeleccionado)}
-                  className="flex-1 px-4 py-3 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600"
-                >
-                  Aceptar Traspaso
-                </button>
-              )}
-              <button
-                onClick={() => setTraspasoSeleccionado(null)}
-                className={`px-4 py-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 ${
-                  traspasoSeleccionado.estado === 'pendiente' && 
-                  traspasoSeleccionado.sucursal_destino_id === usuario?.sucursal_id 
-                    ? '' : 'flex-1'
-                }`}
-              >
-                Cerrar
               </button>
             </div>
           </div>

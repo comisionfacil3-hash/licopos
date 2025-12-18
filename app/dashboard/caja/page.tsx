@@ -5,23 +5,25 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { formatCurrency } from '@/lib/utils/format'
 import { formatDateTime, formatTime } from '@/lib/utils/timezone'
-import Link from 'next/link'
 
 interface Caja {
   id: string
+  sucursal_id: string
+  usuario_id: string
   nombre: string
   monto_inicial: number
+  monto_inicial_qr: number
   monto_final: number | null
+  monto_final_qr: number | null
   fecha_apertura: string
   fecha_cierre: string | null
   estado: 'abierta' | 'cerrada'
   notas: string | null
-  usuario_id: string
-  usuario_nombre: string
 }
 
 interface MovimientoCaja {
   id: string
+  caja_id: string
   tipo: 'ingreso' | 'egreso' | 'retiro' | 'apertura' | 'cierre'
   concepto: string
   monto: number
@@ -30,203 +32,170 @@ interface MovimientoCaja {
 }
 
 interface ResumenCaja {
-  totalEfectivo: number
-  totalQR: number
-  ventasEfectivo: number
-  ventasQR: number
-  pagosCredito: number
-  comprasEfectivo: number
-  comprasQR: number
-  gastosEfectivo: number
-  gastosQR: number
+  monto_inicial: number
+  monto_inicial_qr: number
+  ventas_efectivo: number
+  ventas_qr: number
+  gastos_efectivo: number
+  gastos_qr: number
   retiros: number
+  total_efectivo: number
+  total_qr: number
 }
 
 export default function CajaPage() {
-  const [miCaja, setMiCaja] = useState<Caja | null>(null)
-  const [otrasCajas, setOtrasCajas] = useState<Caja[]>([])
+  const [cajaAbierta, setCajaAbierta] = useState<Caja | null>(null)
   const [movimientos, setMovimientos] = useState<MovimientoCaja[]>([])
-  const [loading, setLoading] = useState(true)
   const [resumen, setResumen] = useState<ResumenCaja | null>(null)
+  const [ultimoCierreEfectivo, setUltimoCierreEfectivo] = useState<number>(0)
+  const [ultimoCierreQR, setUltimoCierreQR] = useState<number>(0)
+  const [loading, setLoading] = useState(true)
   
-  // Estados para modales
-  const [showAbrirCaja, setShowAbrirCaja] = useState(false)
-  const [showCerrarCaja, setShowCerrarCaja] = useState(false)
-  const [showRetiro, setShowRetiro] = useState(false)
+  const [showAbrirModal, setShowAbrirModal] = useState(false)
+  const [showCerrarModal, setShowCerrarModal] = useState(false)
+  const [showRetiroModal, setShowRetiroModal] = useState(false)
+  const [showExito, setShowExito] = useState(false)
+  const [mensajeExito, setMensajeExito] = useState('')
   
-  // Formularios
-  const [montoInicial, setMontoInicial] = useState('')
-  const [montoSugerido, setMontoSugerido] = useState(0)
-  const [montoContado, setMontoContado] = useState('')
-  const [notasCierre, setNotasCierre] = useState('')
+  const [montoInicialEfectivo, setMontoInicialEfectivo] = useState('')
+  const [montoInicialQR, setMontoInicialQR] = useState('')
+  const [montoFinalEfectivo, setMontoFinalEfectivo] = useState('')
+  const [montoFinalQR, setMontoFinalQR] = useState('')
   const [montoRetiro, setMontoRetiro] = useState('')
   const [conceptoRetiro, setConceptoRetiro] = useState('')
-  
-  const [guardando, setGuardando] = useState(false)
+  const [notasCierre, setNotasCierre] = useState('')
+  const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   const { usuario } = useAuth()
   const supabase = createClient()
 
   useEffect(() => {
-    if (usuario?.sucursal_id && usuario?.id) {
-      loadData()
+    if (usuario?.sucursal_id) {
+      loadCaja()
+      loadUltimoCierre()
     }
-  }, [usuario?.sucursal_id, usuario?.id])
+  }, [usuario?.sucursal_id])
 
-  const loadData = async () => {
-    if (!usuario?.sucursal_id || !usuario?.id) return
+  const loadCaja = async () => {
+    if (!usuario?.sucursal_id) return
 
     setLoading(true)
     try {
-      // Buscar MI caja abierta
-      const { data: miCajaData } = await supabase
+      // Buscar caja abierta
+      const { data: caja } = await supabase
         .from('cajas')
-        .select(`
-          *,
-          usuario:usuarios(nombre)
-        `)
+        .select('*')
         .eq('sucursal_id', usuario.sucursal_id)
-        .eq('usuario_id', usuario.id)
         .eq('estado', 'abierta')
         .maybeSingle()
 
-      if (miCajaData) {
-        setMiCaja({
-          ...miCajaData,
-          usuario_nombre: miCajaData.usuario?.nombre || 'Desconocido'
-        })
+      setCajaAbierta(caja)
 
-        // Cargar movimientos de mi caja
-        const { data: movimientosData } = await supabase
+      if (caja) {
+        // Cargar movimientos
+        const { data: movs } = await supabase
           .from('movimientos_caja')
           .select('*')
-          .eq('caja_id', miCajaData.id)
+          .eq('caja_id', caja.id)
           .order('created_at', { ascending: false })
 
-        setMovimientos(movimientosData || [])
-
-        // Calcular resumen
-        calcularResumen(movimientosData || [], miCajaData.monto_inicial)
+        setMovimientos(movs || [])
+        calcularResumen(caja, movs || [])
       } else {
-        setMiCaja(null)
         setMovimientos([])
         setResumen(null)
-
-        // Obtener último monto de cierre para sugerencia
-        const { data: ultimaCaja } = await supabase
-          .from('cajas')
-          .select('monto_final')
-          .eq('usuario_id', usuario.id)
-          .eq('estado', 'cerrada')
-          .order('fecha_cierre', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-
-        setMontoSugerido(ultimaCaja?.monto_final || 0)
       }
-
-      // Buscar OTRAS cajas abiertas en la sucursal (de otros usuarios)
-      const { data: otrasCajasData } = await supabase
-        .from('cajas')
-        .select(`
-          *,
-          usuario:usuarios(nombre)
-        `)
-        .eq('sucursal_id', usuario.sucursal_id)
-        .eq('estado', 'abierta')
-        .neq('usuario_id', usuario.id)
-
-      if (otrasCajasData) {
-        setOtrasCajas(otrasCajasData.map(c => ({
-          ...c,
-          usuario_nombre: c.usuario?.nombre || 'Desconocido'
-        })))
-      }
-
     } catch (err) {
-      console.error('Error cargando datos:', err)
+      console.error('Error cargando caja:', err)
     } finally {
       setLoading(false)
     }
   }
 
-  const calcularResumen = (movs: MovimientoCaja[], montoInicial: number) => {
-    const resumen: ResumenCaja = {
-      totalEfectivo: montoInicial,
-      totalQR: 0,
-      ventasEfectivo: 0,
-      ventasQR: 0,
-      pagosCredito: 0,
-      comprasEfectivo: 0,
-      comprasQR: 0,
-      gastosEfectivo: 0,
-      gastosQR: 0,
-      retiros: 0
+  const calcularResumen = (caja: Caja, movs: MovimientoCaja[]) => {
+    const res: ResumenCaja = {
+      monto_inicial: caja.monto_inicial || 0,
+      monto_inicial_qr: caja.monto_inicial_qr || 0,
+      ventas_efectivo: 0,
+      ventas_qr: 0,
+      gastos_efectivo: 0,
+      gastos_qr: 0,
+      retiros: 0,
+      total_efectivo: caja.monto_inicial || 0,
+      total_qr: caja.monto_inicial_qr || 0
     }
 
     movs.forEach(mov => {
       if (mov.tipo === 'ingreso') {
         if (mov.metodo_pago === 'efectivo') {
-          resumen.totalEfectivo += mov.monto
-          if (mov.concepto.toLowerCase().includes('venta')) {
-            resumen.ventasEfectivo += mov.monto
-          } else if (mov.concepto.toLowerCase().includes('pago') || mov.concepto.toLowerCase().includes('crédito')) {
-            resumen.pagosCredito += mov.monto
-          }
+          res.ventas_efectivo += mov.monto
+          res.total_efectivo += mov.monto
         } else if (mov.metodo_pago === 'qr') {
-          resumen.totalQR += mov.monto
-          if (mov.concepto.toLowerCase().includes('venta')) {
-            resumen.ventasQR += mov.monto
-          }
+          res.ventas_qr += mov.monto
+          res.total_qr += mov.monto
         }
       } else if (mov.tipo === 'egreso') {
         if (mov.metodo_pago === 'efectivo') {
-          resumen.totalEfectivo -= mov.monto
-          if (mov.concepto.toLowerCase().includes('compra')) {
-            resumen.comprasEfectivo += mov.monto
-          } else if (mov.concepto.toLowerCase().includes('gasto')) {
-            resumen.gastosEfectivo += mov.monto
-          }
+          res.gastos_efectivo += mov.monto
+          res.total_efectivo -= mov.monto
         } else if (mov.metodo_pago === 'qr') {
-          resumen.totalQR -= mov.monto
-          if (mov.concepto.toLowerCase().includes('compra')) {
-            resumen.comprasQR += mov.monto
-          } else if (mov.concepto.toLowerCase().includes('gasto')) {
-            resumen.gastosQR += mov.monto
-          }
+          res.gastos_qr += mov.monto
+          res.total_qr -= mov.monto
         }
       } else if (mov.tipo === 'retiro') {
-        resumen.totalEfectivo -= mov.monto
-        resumen.retiros += mov.monto
+        res.retiros += mov.monto
+        res.total_efectivo -= mov.monto
       }
     })
 
-    setResumen(resumen)
+    setResumen(res)
   }
 
-  // Abrir caja
-  const abrirCaja = async () => {
-    if (!usuario?.sucursal_id || !usuario?.id) return
+  const loadUltimoCierre = async () => {
+    if (!usuario?.sucursal_id) return
 
-    const monto = parseFloat(montoInicial) || 0
-    if (monto < 0) {
-      setError('El monto inicial no puede ser negativo')
+    const { data } = await supabase
+      .from('cajas')
+      .select('monto_final, monto_final_qr')
+      .eq('sucursal_id', usuario.sucursal_id)
+      .eq('estado', 'cerrada')
+      .order('fecha_cierre', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    setUltimoCierreEfectivo(data?.monto_final || 0)
+    setUltimoCierreQR(data?.monto_final_qr || 0)
+  }
+
+  const mostrarExito = (mensaje: string) => {
+    setMensajeExito(mensaje)
+    setShowExito(true)
+    setTimeout(() => setShowExito(false), 2500)
+  }
+
+  const handleAbrirCaja = async () => {
+    if (!usuario?.sucursal_id || !usuario?.id) return
+    
+    const montoEfectivo = parseFloat(montoInicialEfectivo) || 0
+    const montoQR = parseFloat(montoInicialQR) || 0
+    
+    if (montoEfectivo < 0 || montoQR < 0) {
+      setError('Los montos no pueden ser negativos')
       return
     }
 
-    setGuardando(true)
+    setSaving(true)
     setError('')
-
+    
     try {
-      // Crear la caja
       const { data: nuevaCaja, error: cajaError } = await supabase
         .from('cajas')
         .insert({
           sucursal_id: usuario.sucursal_id,
           usuario_id: usuario.id,
-          nombre: `Caja de ${usuario.nombre || 'Usuario'}`,
-          monto_inicial: monto,
+          monto_inicial: montoEfectivo,
+          monto_inicial_qr: montoQR,
           estado: 'abierta'
         })
         .select()
@@ -234,116 +203,158 @@ export default function CajaPage() {
 
       if (cajaError) throw cajaError
 
-      // Registrar movimiento de apertura
-      await supabase.from('movimientos_caja').insert({
-        caja_id: nuevaCaja.id,
-        tipo: 'apertura',
-        concepto: 'Apertura de caja',
-        monto: monto,
-        metodo_pago: 'efectivo'
-      })
+      // Registrar movimiento de apertura efectivo
+      if (montoEfectivo > 0) {
+        await supabase
+          .from('movimientos_caja')
+          .insert({
+            caja_id: nuevaCaja.id,
+            tipo: 'apertura',
+            concepto: 'Apertura de caja - Efectivo',
+            monto: montoEfectivo,
+            metodo_pago: 'efectivo'
+          })
+      }
 
-      setShowAbrirCaja(false)
-      setMontoInicial('')
-      await loadData()
+      // Registrar movimiento de apertura QR
+      if (montoQR > 0) {
+        await supabase
+          .from('movimientos_caja')
+          .insert({
+            caja_id: nuevaCaja.id,
+            tipo: 'apertura',
+            concepto: 'Apertura de caja - QR',
+            monto: montoQR,
+            metodo_pago: 'qr'
+          })
+      }
+
+      setShowAbrirModal(false)
+      setMontoInicialEfectivo('')
+      setMontoInicialQR('')
+      mostrarExito('¡Caja abierta correctamente!')
+      await loadCaja()
     } catch (err) {
       console.error('Error abriendo caja:', err)
       setError('Error al abrir la caja')
     } finally {
-      setGuardando(false)
+      setSaving(false)
     }
   }
 
-  // Cerrar caja
-  const cerrarCaja = async () => {
-    if (!miCaja || !usuario?.id) return
-
-    const montoReal = parseFloat(montoContado) || 0
-    if (montoReal < 0) {
-      setError('El monto contado no puede ser negativo')
+  const handleCerrarCaja = async () => {
+    if (!cajaAbierta) return
+    
+    const montoEfectivo = parseFloat(montoFinalEfectivo) || 0
+    const montoQR = parseFloat(montoFinalQR) || 0
+    
+    if (montoEfectivo < 0 || montoQR < 0) {
+      setError('Los montos no pueden ser negativos')
       return
     }
 
-    setGuardando(true)
+    setSaving(true)
     setError('')
-
+    
     try {
-      // Actualizar la caja
       const { error: updateError } = await supabase
         .from('cajas')
         .update({
-          monto_final: montoReal,
+          monto_final: montoEfectivo,
+          monto_final_qr: montoQR,
           fecha_cierre: new Date().toISOString(),
           estado: 'cerrada',
-          notas: notasCierre.trim() || null
+          notas: notasCierre || null
         })
-        .eq('id', miCaja.id)
+        .eq('id', cajaAbierta.id)
 
       if (updateError) throw updateError
 
       // Registrar movimiento de cierre
-      await supabase.from('movimientos_caja').insert({
-        caja_id: miCaja.id,
-        tipo: 'cierre',
-        concepto: 'Cierre de caja',
-        monto: montoReal,
-        metodo_pago: 'efectivo'
-      })
+      await supabase
+        .from('movimientos_caja')
+        .insert({
+          caja_id: cajaAbierta.id,
+          tipo: 'cierre',
+          concepto: `Cierre de caja - Efectivo: ${formatCurrency(montoEfectivo)}, QR: ${formatCurrency(montoQR)}`,
+          monto: montoEfectivo + montoQR,
+          metodo_pago: 'efectivo'
+        })
 
-      setShowCerrarCaja(false)
-      setMontoContado('')
+      setShowCerrarModal(false)
+      setMontoFinalEfectivo('')
+      setMontoFinalQR('')
       setNotasCierre('')
-      await loadData()
+      mostrarExito('¡Caja cerrada correctamente!')
+      await loadCaja()
     } catch (err) {
       console.error('Error cerrando caja:', err)
       setError('Error al cerrar la caja')
     } finally {
-      setGuardando(false)
+      setSaving(false)
     }
   }
 
-  // Registrar retiro
-  const registrarRetiro = async () => {
-    if (!miCaja) return
-
+  const handleRetiro = async () => {
+    if (!cajaAbierta) return
+    
     const monto = parseFloat(montoRetiro) || 0
     if (monto <= 0) {
-      setError('Ingrese un monto válido')
+      setError('El monto debe ser mayor a 0')
       return
     }
-
     if (!conceptoRetiro.trim()) {
-      setError('Ingrese el motivo del retiro')
+      setError('Debe ingresar un concepto')
       return
     }
 
-    if (resumen && monto > resumen.totalEfectivo) {
-      setError('El monto supera el efectivo disponible')
+    if (resumen && monto > resumen.total_efectivo) {
+      setError('No hay suficiente efectivo en caja')
       return
     }
 
-    setGuardando(true)
+    setSaving(true)
     setError('')
-
+    
     try {
-      await supabase.from('movimientos_caja').insert({
-        caja_id: miCaja.id,
-        tipo: 'retiro',
-        concepto: conceptoRetiro.trim(),
-        monto: monto,
-        metodo_pago: 'efectivo'
-      })
+      const { error: insertError } = await supabase
+        .from('movimientos_caja')
+        .insert({
+          caja_id: cajaAbierta.id,
+          tipo: 'retiro',
+          concepto: conceptoRetiro.trim(),
+          monto: monto,
+          metodo_pago: 'efectivo'
+        })
 
-      setShowRetiro(false)
+      if (insertError) throw insertError
+
+      setShowRetiroModal(false)
       setMontoRetiro('')
       setConceptoRetiro('')
-      await loadData()
+      mostrarExito('¡Retiro registrado!')
+      await loadCaja()
     } catch (err) {
       console.error('Error registrando retiro:', err)
       setError('Error al registrar el retiro')
     } finally {
-      setGuardando(false)
+      setSaving(false)
     }
+  }
+
+  const openAbrirModal = () => {
+    setMontoInicialEfectivo(ultimoCierreEfectivo.toString())
+    setMontoInicialQR(ultimoCierreQR.toString())
+    setError('')
+    setShowAbrirModal(true)
+  }
+
+  const openCerrarModal = () => {
+    setMontoFinalEfectivo(resumen?.total_efectivo.toFixed(2) || '0')
+    setMontoFinalQR(resumen?.total_qr.toFixed(2) || '0')
+    setNotasCierre('')
+    setError('')
+    setShowCerrarModal(true)
   }
 
   if (loading) {
@@ -357,309 +368,160 @@ export default function CajaPage() {
     )
   }
 
-  // Vista sin caja abierta
-  if (!miCaja) {
-    return (
-      <div className="p-4 pb-24 max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Mi Caja</h1>
-            <p className="text-gray-500 text-sm">Control de efectivo</p>
-          </div>
-          <Link
-            href="/dashboard/caja/historial"
-            className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </Link>
-        </div>
-
-        {/* Aviso de otras cajas abiertas */}
-        {otrasCajas.length > 0 && (
-          <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm">
-            <div className="flex items-center gap-2 mb-1">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span className="font-medium">Cajas abiertas en esta sucursal:</span>
-            </div>
-            {otrasCajas.map(caja => (
-              <p key={caja.id} className="ml-7">• {caja.usuario_nombre} - desde {formatTime(caja.fecha_apertura)}</p>
-            ))}
-          </div>
-        )}
-
-        <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
-          <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-            </svg>
-          </div>
-          <h3 className="text-xl font-bold text-gray-900 mb-2">Caja Cerrada</h3>
-          <p className="text-gray-500 mb-6">Abre tu caja para comenzar a registrar ventas</p>
-          <button
-            onClick={() => {
-              setMontoInicial(montoSugerido.toString())
-              setShowAbrirCaja(true)
-            }}
-            className="px-6 py-3 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600"
-          >
-            Abrir Mi Caja
-          </button>
-          {montoSugerido > 0 && (
-            <p className="text-sm text-gray-500 mt-3">
-              Último cierre: {formatCurrency(montoSugerido)}
-            </p>
-          )}
-        </div>
-
-        {/* Modal abrir caja */}
-        {showAbrirCaja && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <div className="bg-white rounded-2xl w-full max-w-sm">
-              <div className="p-6 border-b border-gray-100">
-                <h2 className="text-xl font-bold text-gray-900">Abrir Caja</h2>
-              </div>
-              <div className="p-6 space-y-4">
-                {error && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                    {error}
-                  </div>
-                )}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Monto inicial en efectivo
-                  </label>
-                  <input
-                    type="number"
-                    value={montoInicial}
-                    onChange={e => setMontoInicial(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full px-4 py-3 border border-gray-200 rounded-xl text-lg text-center"
-                    min="0"
-                    step="0.01"
-                  />
-                  {montoSugerido > 0 && (
-                    <button
-                      onClick={() => setMontoInicial(montoSugerido.toString())}
-                      className="mt-2 text-sm text-emerald-600 hover:underline"
-                    >
-                      Usar último cierre: {formatCurrency(montoSugerido)}
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="p-6 border-t border-gray-100 flex gap-3">
-                <button
-                  onClick={() => {
-                    setShowAbrirCaja(false)
-                    setError('')
-                  }}
-                  className="flex-1 px-4 py-3 border border-gray-200 text-gray-700 rounded-xl"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={abrirCaja}
-                  disabled={guardando}
-                  className="flex-1 px-4 py-3 bg-emerald-500 text-white rounded-xl font-medium disabled:opacity-50"
-                >
-                  {guardando ? 'Abriendo...' : 'Abrir Caja'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  // Vista con caja abierta
   return (
     <div className="p-4 pb-24 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Mi Caja</h1>
-          <p className="text-gray-500 text-sm">
-            Abierta: {formatTime(miCaja.fecha_apertura)}
-          </p>
+      {/* Modal Éxito */}
+      {showExito && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-8 text-center max-w-sm w-full animate-bounce-in">
+            <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">{mensajeExito}</h2>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Link
-            href="/dashboard/caja/historial"
-            className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+      )}
+
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Caja</h1>
+        <p className="text-gray-500 text-sm">
+          {cajaAbierta ? 'Caja abierta' : 'Caja cerrada'}
+        </p>
+      </div>
+
+      {!cajaAbierta ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-8 text-center">
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
-          </Link>
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Caja Cerrada</h3>
+          <p className="text-gray-500 mb-1">
+            {ultimoCierreEfectivo > 0 || ultimoCierreQR > 0 
+              ? 'Último cierre:'
+              : 'No hay registros de cierres anteriores'}
+          </p>
+          {(ultimoCierreEfectivo > 0 || ultimoCierreQR > 0) && (
+            <div className="text-sm text-gray-600 mb-4">
+              <p>💵 Efectivo: {formatCurrency(ultimoCierreEfectivo)}</p>
+              <p>📱 QR: {formatCurrency(ultimoCierreQR)}</p>
+            </div>
+          )}
           <button
-            onClick={() => setShowRetiro(true)}
-            className="px-3 py-2 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200"
+            onClick={openAbrirModal}
+            className="px-6 py-3 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-colors font-medium"
           >
-            Retiro
+            Abrir Caja
           </button>
         </div>
-      </div>
-
-      {/* Aviso de otras cajas abiertas */}
-      {otrasCajas.length > 0 && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm">
-          <div className="flex items-center gap-2">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>También tiene caja abierta: {otrasCajas.map(c => c.usuario_nombre).join(', ')}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Resumen */}
-      {resumen && (
-        <div className="space-y-4 mb-6">
-          {/* Totales principales */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-100">
-              <div className="flex items-center gap-2 mb-1">
-                <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                <span className="text-sm text-emerald-700">Efectivo</span>
+      ) : (
+        <div className="space-y-4">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-emerald-800 font-medium">Caja Abierta</p>
+                <p className="text-emerald-600 text-sm">
+                  Desde {formatDateTime(cajaAbierta.fecha_apertura)}
+                </p>
               </div>
-              <p className="text-2xl font-bold text-emerald-700">{formatCurrency(resumen.totalEfectivo)}</p>
-            </div>
-            <div className="bg-purple-50 rounded-xl p-4 border border-purple-100">
-              <div className="flex items-center gap-2 mb-1">
-                <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-                </svg>
-                <span className="text-sm text-purple-700">QR</span>
-              </div>
-              <p className="text-2xl font-bold text-purple-700">{formatCurrency(resumen.totalQR)}</p>
+              <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
             </div>
           </div>
 
-          {/* Desglose */}
-          <div className="bg-white rounded-xl border border-gray-100 p-4">
-            <h3 className="font-medium text-gray-900 mb-3">Desglose del día</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-gray-500">Monto inicial</span>
-                <span className="font-medium">{formatCurrency(miCaja.monto_inicial)}</span>
+          {resumen && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white rounded-xl border border-gray-100 p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xl">💵</span>
+                  <p className="text-gray-500 text-sm">Efectivo</p>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">
+                  {formatCurrency(resumen.total_efectivo)}
+                </p>
+                <div className="mt-2 text-xs text-gray-500 space-y-0.5">
+                  <p>Inicial: {formatCurrency(resumen.monto_inicial)}</p>
+                  <p className="text-emerald-600">+ Ventas: {formatCurrency(resumen.ventas_efectivo)}</p>
+                  <p className="text-red-600">- Gastos: {formatCurrency(resumen.gastos_efectivo)}</p>
+                  <p className="text-amber-600">- Retiros: {formatCurrency(resumen.retiros)}</p>
+                </div>
               </div>
-              <div className="flex justify-between text-emerald-600">
-                <span>+ Ventas efectivo</span>
-                <span className="font-medium">{formatCurrency(resumen.ventasEfectivo)}</span>
-              </div>
-              <div className="flex justify-between text-purple-600">
-                <span>+ Ventas QR</span>
-                <span className="font-medium">{formatCurrency(resumen.ventasQR)}</span>
-              </div>
-              {resumen.pagosCredito > 0 && (
-                <div className="flex justify-between text-blue-600">
-                  <span>+ Pagos de crédito</span>
-                  <span className="font-medium">{formatCurrency(resumen.pagosCredito)}</span>
+
+              <div className="bg-white rounded-xl border border-gray-100 p-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xl">📱</span>
+                  <p className="text-gray-500 text-sm">QR</p>
                 </div>
-              )}
-              {(resumen.comprasEfectivo + resumen.comprasQR) > 0 && (
-                <div className="flex justify-between text-red-600">
-                  <span>- Compras</span>
-                  <span className="font-medium">{formatCurrency(resumen.comprasEfectivo + resumen.comprasQR)}</span>
+                <p className="text-2xl font-bold text-gray-900">
+                  {formatCurrency(resumen.total_qr)}
+                </p>
+                <div className="mt-2 text-xs text-gray-500 space-y-0.5">
+                  <p>Inicial: {formatCurrency(resumen.monto_inicial_qr)}</p>
+                  <p className="text-emerald-600">+ Ventas: {formatCurrency(resumen.ventas_qr)}</p>
+                  <p className="text-red-600">- Gastos: {formatCurrency(resumen.gastos_qr)}</p>
                 </div>
-              )}
-              {(resumen.gastosEfectivo + resumen.gastosQR) > 0 && (
-                <div className="flex justify-between text-red-600">
-                  <span>- Gastos</span>
-                  <span className="font-medium">{formatCurrency(resumen.gastosEfectivo + resumen.gastosQR)}</span>
-                </div>
-              )}
-              {resumen.retiros > 0 && (
-                <div className="flex justify-between text-yellow-600">
-                  <span>- Retiros</span>
-                  <span className="font-medium">{formatCurrency(resumen.retiros)}</span>
-                </div>
-              )}
-              <div className="flex justify-between pt-2 border-t border-gray-100 font-bold text-lg">
-                <span>Total esperado</span>
-                <span className="text-emerald-600">{formatCurrency(resumen.totalEfectivo + resumen.totalQR)}</span>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {/* Movimientos recientes */}
-      <div className="mb-6">
-        <h3 className="font-medium text-gray-900 mb-3">Movimientos recientes</h3>
-        {movimientos.length === 0 ? (
-          <div className="text-center py-8 bg-white rounded-xl border border-gray-100 text-gray-500">
-            No hay movimientos registrados
+          {/* Botones de acción */}
+          <div className="flex gap-3">
+            <button
+              onClick={() => { setError(''); setShowRetiroModal(true) }}
+              className="flex-1 px-4 py-3 bg-amber-50 text-amber-700 rounded-xl hover:bg-amber-100 transition-colors font-medium"
+            >
+              Retiro
+            </button>
+            <button
+              onClick={openCerrarModal}
+              className="flex-1 px-4 py-3 bg-red-50 text-red-700 rounded-xl hover:bg-red-100 transition-colors font-medium"
+            >
+              Cerrar Caja
+            </button>
           </div>
-        ) : (
-          <div className="space-y-2">
-            {movimientos.slice(0, 10).map(mov => (
-              <div key={mov.id} className="bg-white rounded-xl border border-gray-100 p-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                      mov.tipo === 'ingreso' ? 'bg-emerald-100' :
-                      mov.tipo === 'egreso' ? 'bg-red-100' :
-                      mov.tipo === 'retiro' ? 'bg-yellow-100' :
-                      'bg-gray-100'
+
+          {movimientos.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-100 p-4">
+              <h3 className="font-medium text-gray-900 mb-3">Movimientos recientes</h3>
+              <div className="space-y-2">
+                {movimientos.slice(0, 15).map(mov => (
+                  <div key={mov.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-gray-900 text-sm">{mov.concepto}</p>
+                        {mov.metodo_pago && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                            {mov.metodo_pago === 'efectivo' ? '💵' : '📱'} {mov.metodo_pago === 'efectivo' ? 'Efectivo' : 'QR'}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-gray-400 text-xs">{formatTime(mov.created_at)}</p>
+                    </div>
+                    <span className={`font-medium ${
+                      mov.tipo === 'ingreso' || mov.tipo === 'apertura' 
+                        ? 'text-emerald-600' 
+                        : 'text-red-600'
                     }`}>
-                      {mov.tipo === 'ingreso' ? (
-                        <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                        </svg>
-                      ) : mov.tipo === 'egreso' || mov.tipo === 'retiro' ? (
-                        <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-                        </svg>
-                      ) : (
-                        <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      )}
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">{mov.concepto}</p>
-                      <p className="text-xs text-gray-500">
-                        {formatTime(mov.created_at)}
-                        {mov.metodo_pago && ` • ${mov.metodo_pago === 'efectivo' ? 'Efectivo' : 'QR'}`}
-                      </p>
-                    </div>
+                      {mov.tipo === 'egreso' || mov.tipo === 'retiro' ? '-' : '+'}
+                      {formatCurrency(mov.monto)}
+                    </span>
                   </div>
-                  <p className={`font-bold ${
-                    mov.tipo === 'ingreso' ? 'text-emerald-600' :
-                    mov.tipo === 'egreso' || mov.tipo === 'retiro' ? 'text-red-600' :
-                    'text-gray-600'
-                  }`}>
-                    {mov.tipo === 'ingreso' ? '+' : mov.tipo === 'egreso' || mov.tipo === 'retiro' ? '-' : ''}
-                    {formatCurrency(mov.monto)}
-                  </p>
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* Botón cerrar caja */}
-      <button
-        onClick={() => setShowCerrarCaja(true)}
-        className="w-full px-4 py-3 bg-red-500 text-white rounded-xl font-medium hover:bg-red-600"
-      >
-        Cerrar Mi Caja
-      </button>
-
-      {/* Modal retiro */}
-      {showRetiro && (
+      {/* Modal Abrir Caja */}
+      {showAbrirModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl w-full max-w-sm">
             <div className="p-6 border-b border-gray-100">
-              <h2 className="text-xl font-bold text-gray-900">Retiro de Caja</h2>
+              <h2 className="text-xl font-bold text-gray-900">Abrir Caja</h2>
+              <p className="text-sm text-gray-500">Ingresa los montos iniciales</p>
             </div>
             <div className="p-6 space-y-4">
               {error && (
@@ -668,59 +530,70 @@ export default function CajaPage() {
                 </div>
               )}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Monto</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  💵 Monto inicial Efectivo (Bs.)
+                </label>
                 <input
                   type="number"
-                  value={montoRetiro}
-                  onChange={e => setMontoRetiro(e.target.value)}
+                  value={montoInicialEfectivo}
+                  onChange={e => setMontoInicialEfectivo(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-lg"
                   placeholder="0.00"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl"
-                  min="0"
                   step="0.01"
+                  min="0"
                 />
-                <p className="text-xs text-gray-500 mt-1">
-                  Efectivo disponible: {formatCurrency(resumen?.totalEfectivo || 0)}
-                </p>
+                {ultimoCierreEfectivo > 0 && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Sugerido: {formatCurrency(ultimoCierreEfectivo)}
+                  </p>
+                )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Motivo *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  📱 Monto inicial QR (Bs.)
+                </label>
                 <input
-                  type="text"
-                  value={conceptoRetiro}
-                  onChange={e => setConceptoRetiro(e.target.value)}
-                  placeholder="Ej: Retiro para depósito bancario"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl"
+                  type="number"
+                  value={montoInicialQR}
+                  onChange={e => setMontoInicialQR(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-lg"
+                  placeholder="0.00"
+                  step="0.01"
+                  min="0"
                 />
+                {ultimoCierreQR > 0 && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Sugerido: {formatCurrency(ultimoCierreQR)}
+                  </p>
+                )}
               </div>
             </div>
             <div className="p-6 border-t border-gray-100 flex gap-3">
               <button
-                onClick={() => {
-                  setShowRetiro(false)
-                  setError('')
-                }}
-                className="flex-1 px-4 py-3 border border-gray-200 text-gray-700 rounded-xl"
+                onClick={() => setShowAbrirModal(false)}
+                className="flex-1 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50"
               >
                 Cancelar
               </button>
               <button
-                onClick={registrarRetiro}
-                disabled={guardando}
-                className="flex-1 px-4 py-3 bg-yellow-500 text-white rounded-xl font-medium disabled:opacity-50"
+                onClick={handleAbrirCaja}
+                disabled={saving}
+                className="flex-1 px-4 py-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50"
               >
-                {guardando ? 'Guardando...' : 'Registrar'}
+                {saving ? 'Abriendo...' : 'Abrir'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal cerrar caja */}
-      {showCerrarCaja && (
+      {/* Modal Cerrar Caja */}
+      {showCerrarModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-sm">
+          <div className="bg-white rounded-2xl w-full max-w-sm max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-100">
               <h2 className="text-xl font-bold text-gray-900">Cerrar Caja</h2>
+              <p className="text-sm text-gray-500">Ingresa los montos contados</p>
             </div>
             <div className="p-6 space-y-4">
               {error && (
@@ -728,82 +601,177 @@ export default function CajaPage() {
                   {error}
                 </div>
               )}
+              
+              {resumen && (
+                <div className="p-3 bg-gray-50 rounded-lg space-y-1">
+                  <p className="text-sm text-gray-500">Totales esperados:</p>
+                  <p className="text-sm font-medium">💵 Efectivo: {formatCurrency(resumen.total_efectivo)}</p>
+                  <p className="text-sm font-medium">📱 QR: {formatCurrency(resumen.total_qr)}</p>
+                </div>
+              )}
 
-              <div className="bg-gray-50 rounded-xl p-4">
-                <p className="text-sm text-gray-500 mb-1">Efectivo esperado</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {formatCurrency(resumen?.totalEfectivo || 0)}
-                </p>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  💵 Monto contado Efectivo (Bs.)
+                </label>
+                <input
+                  type="number"
+                  value={montoFinalEfectivo}
+                  onChange={e => setMontoFinalEfectivo(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-lg"
+                  placeholder="0.00"
+                  step="0.01"
+                  min="0"
+                />
+                {resumen && montoFinalEfectivo && (
+                  <p className={`text-xs mt-1 ${
+                    parseFloat(montoFinalEfectivo) === resumen.total_efectivo
+                      ? 'text-emerald-600'
+                      : parseFloat(montoFinalEfectivo) > resumen.total_efectivo
+                      ? 'text-blue-600'
+                      : 'text-red-600'
+                  }`}>
+                    Diferencia: {formatCurrency(parseFloat(montoFinalEfectivo) - resumen.total_efectivo)}
+                  </p>
+                )}
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Efectivo contado (real)
+                  📱 Monto contado QR (Bs.)
                 </label>
                 <input
                   type="number"
-                  value={montoContado}
-                  onChange={e => setMontoContado(e.target.value)}
+                  value={montoFinalQR}
+                  onChange={e => setMontoFinalQR(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-lg"
                   placeholder="0.00"
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-lg text-center"
-                  min="0"
                   step="0.01"
+                  min="0"
                 />
+                {resumen && montoFinalQR && (
+                  <p className={`text-xs mt-1 ${
+                    parseFloat(montoFinalQR) === resumen.total_qr
+                      ? 'text-emerald-600'
+                      : parseFloat(montoFinalQR) > resumen.total_qr
+                      ? 'text-blue-600'
+                      : 'text-red-600'
+                  }`}>
+                    Diferencia: {formatCurrency(parseFloat(montoFinalQR) - resumen.total_qr)}
+                  </p>
+                )}
               </div>
 
-              {montoContado && resumen && (
-                <div className={`p-3 rounded-xl ${
-                  parseFloat(montoContado) === resumen.totalEfectivo
-                    ? 'bg-emerald-50 text-emerald-700'
-                    : parseFloat(montoContado) > resumen.totalEfectivo
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'bg-red-50 text-red-700'
-                }`}>
-                  <p className="font-medium">
-                    Diferencia: {formatCurrency(parseFloat(montoContado) - resumen.totalEfectivo)}
-                  </p>
-                  <p className="text-sm">
-                    {parseFloat(montoContado) === resumen.totalEfectivo
-                      ? 'Cuadra perfectamente ✓'
-                      : parseFloat(montoContado) > resumen.totalEfectivo
-                        ? 'Sobrante de efectivo'
-                        : 'Faltante de efectivo'}
-                  </p>
-                </div>
-              )}
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Notas (opcional)
+                </label>
                 <textarea
                   value={notasCierre}
                   onChange={e => setNotasCierre(e.target.value)}
-                  placeholder="Observaciones del cierre..."
-                  className="w-full px-4 py-3 border border-gray-200 rounded-xl resize-none"
+                  className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none resize-none"
                   rows={2}
+                  placeholder="Observaciones del cierre..."
                 />
               </div>
             </div>
             <div className="p-6 border-t border-gray-100 flex gap-3">
               <button
-                onClick={() => {
-                  setShowCerrarCaja(false)
-                  setError('')
-                }}
-                className="flex-1 px-4 py-3 border border-gray-200 text-gray-700 rounded-xl"
+                onClick={() => setShowCerrarModal(false)}
+                className="flex-1 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50"
               >
                 Cancelar
               </button>
               <button
-                onClick={cerrarCaja}
-                disabled={guardando || !montoContado}
-                className="flex-1 px-4 py-3 bg-red-500 text-white rounded-xl font-medium disabled:opacity-50"
+                onClick={handleCerrarCaja}
+                disabled={saving}
+                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-xl hover:bg-red-600 disabled:opacity-50"
               >
-                {guardando ? 'Cerrando...' : 'Cerrar Caja'}
+                {saving ? 'Cerrando...' : 'Cerrar Caja'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Modal Retiro */}
+      {showRetiroModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl w-full max-w-sm">
+            <div className="p-6 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">Retiro de Caja</h2>
+              <p className="text-sm text-gray-500">Solo se puede retirar efectivo</p>
+            </div>
+            <div className="p-6 space-y-4">
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {error}
+                </div>
+              )}
+              
+              {resumen && (
+                <p className="text-sm text-gray-500">
+                  Disponible en efectivo: <span className="font-medium text-gray-900">{formatCurrency(resumen.total_efectivo)}</span>
+                </p>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Monto a retirar (Bs.)
+                </label>
+                <input
+                  type="number"
+                  value={montoRetiro}
+                  onChange={e => setMontoRetiro(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-lg"
+                  placeholder="0.00"
+                  step="0.01"
+                  min="0"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Concepto / Motivo
+                </label>
+                <input
+                  type="text"
+                  value={conceptoRetiro}
+                  onChange={e => setConceptoRetiro(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                  placeholder="Ej: Pago a proveedor"
+                />
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => setShowRetiroModal(false)}
+                className="flex-1 px-4 py-2 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleRetiro}
+                disabled={saving}
+                className="flex-1 px-4 py-2 bg-amber-500 text-white rounded-xl hover:bg-amber-600 disabled:opacity-50"
+              >
+                {saving ? 'Procesando...' : 'Retirar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style jsx>{`
+        @keyframes bounce-in {
+          0% { transform: scale(0.5); opacity: 0; }
+          50% { transform: scale(1.05); }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-bounce-in {
+          animation: bounce-in 0.4s ease-out;
+        }
+      `}</style>
     </div>
   )
 }

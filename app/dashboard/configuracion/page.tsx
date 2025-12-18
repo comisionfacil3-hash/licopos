@@ -1,235 +1,204 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/use-auth'
 
-interface SucursalConfig {
-  id: string
-  nombre: string
-  direccion: string | null
-  telefono: string | null
-  logo_url: string | null
-  empresa_id: string
-  pin_seguridad: string | null
-}
-interface EmpresaInfo {
-  id: string
-  nombre: string
-}
-
 export default function ConfiguracionPage() {
-  const [sucursal, setSucursal] = useState<SucursalConfig | null>(null)
-  const [empresa, setEmpresa] = useState<EmpresaInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [uploading, setUploading] = useState(false)
-
-  // Formulario
-  const [formData, setFormData] = useState({
-    nombre: '',
-    direccion: '',
-    telefono: '',
-    pin: '',
-  })
-
-  // Imagen
-  const [logoFile, setLogoFile] = useState<File | null>(null)
-  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [showExito, setShowExito] = useState(false)
+  const [mensajeExito, setMensajeExito] = useState('')
+  
+  // Perfil
+  const [nombre, setNombre] = useState('')
+  const [telefono, setTelefono] = useState('')
+  const [email, setEmail] = useState('')
+  
+  // PIN
+  const [showPinModal, setShowPinModal] = useState(false)
+  const [pinActual, setPinActual] = useState('')
+  const [pinNuevo, setPinNuevo] = useState('')
+  const [pinConfirmar, setPinConfirmar] = useState('')
+  const [tienePinActual, setTienePinActual] = useState(false)
+  
+  // Contraseña
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [passwordActual, setPasswordActual] = useState('')
+  const [passwordNueva, setPasswordNueva] = useState('')
+  const [passwordConfirmar, setPasswordConfirmar] = useState('')
+  
+  const [error, setError] = useState('')
 
   const { usuario } = useAuth()
-  const router = useRouter()
   const supabase = createClient()
 
-  // Solo gerentes y admins pueden configurar
-  const puedeConfigurar = usuario?.rol === 'admin' || usuario?.rol === 'gerente'
-
   useEffect(() => {
-    if (usuario?.sucursal_id) {
-      fetchSucursal()
+    if (usuario?.id) {
+      fetchPerfil()
     }
-  }, [usuario?.sucursal_id])
+  }, [usuario?.id])
 
-  const fetchSucursal = async () => {
+  const fetchPerfil = async () => {
     try {
       setLoading(true)
-
-      // Obtener sucursal
-      const { data: sucursalData, error: sucursalError } = await supabase
-        .from('sucursales')
-        .select('*')
-        .eq('id', usuario?.sucursal_id)
+      const { data, error } = await supabase
+        .from('usuarios')
+        .select('nombre, telefono, email, pin')
+        .eq('id', usuario?.id)
         .single()
 
-      if (sucursalError) throw sucursalError
+      if (error) throw error
 
-      setSucursal(sucursalData)
-      setFormData({
-        nombre: sucursalData.nombre || '',
-        direccion: sucursalData.direccion || '',
-        telefono: sucursalData.telefono || '',
-        pin: '',
-      })
-
-      if (sucursalData.logo_url) {
-        setLogoPreview(sucursalData.logo_url)
+      if (data) {
+        setNombre(data.nombre || '')
+        setTelefono(data.telefono || '')
+        setEmail(data.email || '')
+        setTienePinActual(!!data.pin)
       }
-
-      // Obtener empresa
-      const { data: empresaData } = await supabase
-        .from('empresas')
-        .select('id, nombre')
-        .eq('id', sucursalData.empresa_id)
-        .single()
-
-      if (empresaData) {
-        setEmpresa(empresaData)
-      }
-
-    } catch (error) {
-      console.error('Error fetching sucursal:', error)
+    } catch (err) {
+      console.error('Error:', err)
     } finally {
       setLoading(false)
     }
   }
 
-  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    try {
-      // Comprimir imagen
-      const { compressImage } = await import('@/lib/utils/image-compressor')
-      const compressedFile = await compressImage(file, {
-        maxWidth: 400,
-        maxHeight: 400,
-        quality: 0.8
-      })
-
-      setLogoFile(compressedFile)
-
-      // Preview
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setLogoPreview(reader.result as string)
-      }
-      reader.readAsDataURL(compressedFile)
-    } catch (error) {
-      console.error('Error compressing image:', error)
-      // Usar original si falla compresión
-      setLogoFile(file)
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setLogoPreview(reader.result as string)
-      }
-      reader.readAsDataURL(file)
-    }
+  const mostrarExito = (mensaje: string) => {
+    setMensajeExito(mensaje)
+    setShowExito(true)
+    setTimeout(() => setShowExito(false), 2500)
   }
 
-  const uploadLogo = async (): Promise<string | null> => {
-    if (!logoFile || !usuario?.sucursal_id) return null
+  const guardarPerfil = async () => {
+    if (!nombre.trim()) {
+      setError('El nombre es obligatorio')
+      return
+    }
+
+    setSaving(true)
+    setError('')
 
     try {
-      setUploading(true)
+      const { error: updateError } = await supabase
+        .from('usuarios')
+        .update({
+          nombre: nombre.trim(),
+          telefono: telefono.trim() || null
+        })
+        .eq('id', usuario?.id)
 
-      const fileExt = logoFile.name.split('.').pop()
-      const fileName = `logo-${Date.now()}.${fileExt}`
-      const filePath = `sucursales/${usuario.sucursal_id}/${fileName}`
+      if (updateError) throw updateError
 
-      const { error: uploadError } = await supabase.storage
-        .from('product-images')
-        .upload(filePath, logoFile)
-
-      if (uploadError) throw uploadError
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('product-images')
-        .getPublicUrl(filePath)
-
-      return publicUrl
-    } catch (error) {
-      console.error('Error uploading logo:', error)
-      return null
+      mostrarExito('Perfil actualizado')
+    } catch (err) {
+      console.error('Error:', err)
+      setError('Error al guardar los cambios')
     } finally {
-      setUploading(false)
+      setSaving(false)
     }
   }
 
-  const removeLogo = () => {
-    setLogoFile(null)
-    setLogoPreview(null)
-  }
+  const guardarPin = async () => {
+    setError('')
+    
+    // Validaciones
+    if (tienePinActual && !pinActual) {
+      setError('Ingresa tu PIN actual')
+      return
+    }
+    
+    if (!pinNuevo || pinNuevo.length !== 4) {
+      setError('El PIN debe tener 4 dígitos')
+      return
+    }
+    
+    if (pinNuevo !== pinConfirmar) {
+      setError('Los PIN no coinciden')
+      return
+    }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    if (!formData.nombre.trim()) {
-      alert('El nombre de la sucursal es obligatorio')
+    if (!/^\d{4}$/.test(pinNuevo)) {
+      setError('El PIN debe ser numérico')
       return
     }
 
     setSaving(true)
 
     try {
-      // Subir logo si hay uno nuevo
-      let logoUrl = sucursal?.logo_url
-      if (logoFile) {
-        const newLogoUrl = await uploadLogo()
-        if (newLogoUrl) {
-          logoUrl = newLogoUrl
+      // Si tiene PIN actual, verificarlo
+      if (tienePinActual) {
+        const { data: userData } = await supabase
+          .from('usuarios')
+          .select('pin')
+          .eq('id', usuario?.id)
+          .single()
+        
+        if (userData?.pin !== pinActual) {
+          setError('El PIN actual es incorrecto')
+          setSaving(false)
+          return
         }
-      } else if (!logoPreview && sucursal?.logo_url) {
-        // Se eliminó el logo
-        logoUrl = null
       }
 
-      // Preparar datos de actualización
-      const updateData: any = {
-        nombre: formData.nombre.trim(),
-        direccion: formData.direccion.trim() || null,
-        telefono: formData.telefono.trim() || null,
-        logo_url: logoUrl,
-      }
+      const { error: updateError } = await supabase
+        .from('usuarios')
+        .update({ pin: pinNuevo })
+        .eq('id', usuario?.id)
 
-      // Solo actualizar PIN si se ingresó uno nuevo
-      if (formData.pin && formData.pin.length >= 4) {
-        updateData.pin_seguridad = formData.pin
-      }
+      if (updateError) throw updateError
 
-      // Actualizar sucursal
-      const { error } = await supabase
-        .from('sucursales')
-        .update(updateData)
-        .eq('id', usuario?.sucursal_id)
-
-      if (error) throw error
-
-      alert('Configuración guardada exitosamente')
-      await fetchSucursal()
-
-    } catch (error) {
-      console.error('Error saving config:', error)
-      alert('Error al guardar la configuración')
+      setShowPinModal(false)
+      setPinActual('')
+      setPinNuevo('')
+      setPinConfirmar('')
+      setTienePinActual(true)
+      mostrarExito('PIN configurado correctamente')
+    } catch (err) {
+      console.error('Error:', err)
+      setError('Error al guardar el PIN')
     } finally {
       setSaving(false)
     }
   }
 
-  if (!puedeConfigurar) {
-    return (
-      <div className="p-4 pb-24">
-        <div className="text-center py-12">
-          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-          <h3 className="mt-2 text-sm font-medium text-gray-900">Acceso Restringido</h3>
-          <p className="mt-1 text-sm text-gray-500">
-            No tienes permisos para modificar la configuración
-          </p>
-        </div>
-      </div>
-    )
+  const cambiarPassword = async () => {
+    setError('')
+
+    if (!passwordActual) {
+      setError('Ingresa tu contraseña actual')
+      return
+    }
+
+    if (!passwordNueva || passwordNueva.length < 6) {
+      setError('La nueva contraseña debe tener al menos 6 caracteres')
+      return
+    }
+
+    if (passwordNueva !== passwordConfirmar) {
+      setError('Las contraseñas no coinciden')
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      const { error: authError } = await supabase.auth.updateUser({
+        password: passwordNueva
+      })
+
+      if (authError) throw authError
+
+      setShowPasswordModal(false)
+      setPasswordActual('')
+      setPasswordNueva('')
+      setPasswordConfirmar('')
+      mostrarExito('Contraseña actualizada')
+    } catch (err: any) {
+      console.error('Error:', err)
+      setError(err.message || 'Error al cambiar la contraseña')
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (loading) {
@@ -237,230 +206,303 @@ export default function ConfiguracionPage() {
       <div className="p-4">
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-          <div className="h-32 bg-gray-200 rounded-xl"></div>
-          <div className="h-48 bg-gray-200 rounded-xl"></div>
+          <div className="h-40 bg-gray-200 rounded-xl"></div>
+          <div className="h-40 bg-gray-200 rounded-xl"></div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="p-4 pb-24">
-      {/* Header */}
+    <div className="p-4 pb-24 max-w-lg mx-auto">
+      {/* Modal Éxito */}
+      {showExito && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-8 text-center max-w-sm w-full animate-bounce-in">
+            <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900">{mensajeExito}</h2>
+          </div>
+        </div>
+      )}
+
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Configuración</h1>
-        <p className="text-gray-600">Personaliza la información de tu sucursal</p>
+        <p className="text-gray-500 text-sm">Gestiona tu perfil y seguridad</p>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Info de empresa (solo lectura) */}
-        <div className="bg-gray-50 rounded-xl p-4">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-primary-100 rounded-lg flex items-center justify-center">
-              <svg className="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-xs text-gray-500">Empresa</p>
-              <p className="font-medium text-gray-900">{empresa?.nombre || 'Sin asignar'}</p>
-            </div>
+      {/* Mi Perfil */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5 mb-4">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Mi Perfil</h2>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+            <input
+              type="text"
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+              placeholder="Tu nombre"
+            />
           </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+            <input
+              type="tel"
+              value={telefono}
+              onChange={(e) => setTelefono(e.target.value)}
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+              placeholder="Tu teléfono"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input
+              type="email"
+              value={email}
+              disabled
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">El email no se puede cambiar</p>
+          </div>
+
+          <button
+            onClick={guardarPerfil}
+            disabled={saving}
+            className="w-full py-2.5 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600 disabled:opacity-50 transition-colors"
+          >
+            {saving ? 'Guardando...' : 'Guardar Cambios'}
+          </button>
         </div>
+      </div>
 
-        {/* Logo de sucursal */}
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Logo de Sucursal</h3>
-          <p className="text-sm text-gray-500 mb-4">
-            Este logo aparecerá en las cotizaciones y recibos
-          </p>
-
-          <div className="flex items-center space-x-6">
-            {/* Preview del logo */}
-            <div className="w-32 h-32 bg-gray-100 rounded-xl overflow-hidden flex items-center justify-center border-2 border-dashed border-gray-300">
-              {logoPreview ? (
-                <img
-                  src={logoPreview}
-                  alt="Logo"
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <div className="text-center">
-                  <svg className="mx-auto w-10 h-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                  <p className="text-xs text-gray-500 mt-1">Sin logo</p>
-                </div>
-              )}
-            </div>
-
-            {/* Botones */}
-            <div className="flex flex-col space-y-2">
-              <label className="btn-primary cursor-pointer text-center">
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+      {/* Seguridad */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Seguridad</h2>
+        
+        <div className="space-y-3">
+          <button
+            onClick={() => { setError(''); setShowPinModal(true) }}
+            className="w-full flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                 </svg>
-                Subir Logo
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleLogoChange}
-                  className="hidden"
-                />
-              </label>
-
-              {logoPreview && (
-                <button
-                  type="button"
-                  onClick={removeLogo}
-                  className="btn-secondary text-red-600 hover:bg-red-50"
-                >
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  Eliminar
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Información de la sucursal */}
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Información de Sucursal</h3>
-
-          <div className="space-y-4">
-            <div>
-              <label className="label">Nombre de Sucursal *</label>
-              <input
-                type="text"
-                value={formData.nombre}
-                onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
-                className="input"
-                placeholder="Ej: Sucursal Centro"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="label">Dirección</label>
-              <textarea
-                value={formData.direccion}
-                onChange={(e) => setFormData({ ...formData, direccion: e.target.value })}
-                className="input"
-                rows={2}
-                placeholder="Ej: Av. Principal #123, Zona Centro"
-              />
-            </div>
-
-            <div>
-              <label className="label">Teléfono</label>
-              <input
-                type="tel"
-                value={formData.telefono}
-                onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
-                className="input"
-                placeholder="Ej: 591 12345678"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* PIN de Seguridad */}
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">PIN de Seguridad</h3>
-          <p className="text-sm text-gray-500 mb-4">
-            Este PIN se solicitará al modificar el stock de productos
-          </p>
-
-          <div className="space-y-4">
-            <div>
-              <label className="label">PIN Actual</label>
-              <div className="flex items-center space-x-3">
-                <input
-                  type="password"
-                  value={sucursal?.pin_seguridad ? '••••••' : ''}
-                  className="input flex-1"
-                  placeholder="No configurado"
-                  disabled
-                />
-                <span className={`text-sm font-medium ${sucursal?.pin_seguridad ? 'text-green-600' : 'text-orange-600'}`}>
-                  {sucursal?.pin_seguridad ? '✓ Configurado' : '⚠ Sin PIN'}
-                </span>
+              </div>
+              <div className="text-left">
+                <p className="font-medium text-gray-900">{tienePinActual ? 'Cambiar PIN' : 'Configurar PIN'}</p>
+                <p className="text-xs text-gray-500">Para confirmar operaciones importantes</p>
               </div>
             </div>
+            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
 
-            <div>
-              <label className="label">Nuevo PIN (4-6 dígitos)</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                value={formData.pin || ''}
-                onChange={(e) => {
-                  const value = e.target.value.replace(/\D/g, '').slice(0, 6)
-                  setFormData({ ...formData, pin: value })
-                }}
-                className="input"
-                placeholder="Ingresa nuevo PIN"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Deja vacío para mantener el PIN actual
+          <button
+            onClick={() => { setError(''); setShowPasswordModal(true) }}
+            className="w-full flex items-center justify-between p-4 bg-gray-50 rounded-xl hover:bg-gray-100 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+                <svg className="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+              </div>
+              <div className="text-left">
+                <p className="font-medium text-gray-900">Cambiar Contraseña</p>
+                <p className="text-xs text-gray-500">Actualiza tu contraseña de acceso</p>
+              </div>
+            </div>
+            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* Modal PIN */}
+      {showPinModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm">
+            <div className="p-6 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">
+                {tienePinActual ? 'Cambiar PIN' : 'Configurar PIN'}
+              </h2>
+              <p className="text-sm text-gray-500 mt-1">
+                El PIN se usa para confirmar operaciones importantes como anular ventas o hacer retiros de caja
               </p>
             </div>
-          </div>
-        </div>
-
-        {/* Vista previa de cotización */}
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Vista Previa (Cotización)</h3>
-          
-          <div className="bg-gray-50 rounded-lg p-4 border">
-            <div className="flex items-center space-x-4 mb-4 pb-4 border-b border-gray-200">
-              {logoPreview ? (
-                <img src={logoPreview} alt="Logo" className="w-16 h-16 object-contain" />
-              ) : (
-                <div className="w-16 h-16 bg-gray-200 rounded-lg flex items-center justify-center">
-                  <span className="text-gray-400 text-xs">Logo</span>
+            
+            <div className="p-6 space-y-4">
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {error}
                 </div>
               )}
+
+              {tienePinActual && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">PIN Actual</label>
+                  <input
+                    type="password"
+                    value={pinActual}
+                    onChange={(e) => setPinActual(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-center text-2xl tracking-widest"
+                    placeholder="••••"
+                    maxLength={4}
+                    inputMode="numeric"
+                  />
+                </div>
+              )}
+
               <div>
-                <h4 className="font-bold text-gray-900">{formData.nombre || 'Nombre Sucursal'}</h4>
-                {formData.direccion && (
-                  <p className="text-sm text-gray-600">{formData.direccion}</p>
-                )}
-                {formData.telefono && (
-                  <p className="text-sm text-gray-600">Tel: {formData.telefono}</p>
-                )}
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nuevo PIN (4 dígitos)</label>
+                <input
+                  type="password"
+                  value={pinNuevo}
+                  onChange={(e) => setPinNuevo(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-center text-2xl tracking-widest"
+                  placeholder="••••"
+                  maxLength={4}
+                  inputMode="numeric"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar PIN</label>
+                <input
+                  type="password"
+                  value={pinConfirmar}
+                  onChange={(e) => setPinConfirmar(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none text-center text-2xl tracking-widest"
+                  placeholder="••••"
+                  maxLength={4}
+                  inputMode="numeric"
+                />
               </div>
             </div>
-            <p className="text-xs text-gray-400 text-center">
-              Así se verá el encabezado en tus cotizaciones
-            </p>
+
+            <div className="p-6 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => {
+                  setShowPinModal(false)
+                  setPinActual('')
+                  setPinNuevo('')
+                  setPinConfirmar('')
+                  setError('')
+                }}
+                className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={guardarPin}
+                disabled={saving}
+                className="flex-1 px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50"
+              >
+                {saving ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
           </div>
         </div>
+      )}
 
-        {/* Botón guardar */}
-        <button
-          type="submit"
-          className="btn-primary w-full py-3"
-          disabled={saving || uploading}
-        >
-          {saving || uploading ? (
-            <>
-              <span className="spinner mr-2"></span>
-              {uploading ? 'Subiendo logo...' : 'Guardando...'}
-            </>
-          ) : (
-            <>
-              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-              Guardar Configuración
-            </>
-          )}
-        </button>
-      </form>
+      {/* Modal Contraseña */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm">
+            <div className="p-6 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">Cambiar Contraseña</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Ingresa tu contraseña actual y la nueva
+              </p>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {error}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña Actual</label>
+                <input
+                  type="password"
+                  value={passwordActual}
+                  onChange={(e) => setPasswordActual(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                  placeholder="••••••••"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nueva Contraseña</label>
+                <input
+                  type="password"
+                  value={passwordNueva}
+                  onChange={(e) => setPasswordNueva(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                  placeholder="Mínimo 6 caracteres"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar Nueva Contraseña</label>
+                <input
+                  type="password"
+                  value={passwordConfirmar}
+                  onChange={(e) => setPasswordConfirmar(e.target.value)}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                  placeholder="Repite la contraseña"
+                />
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => {
+                  setShowPasswordModal(false)
+                  setPasswordActual('')
+                  setPasswordNueva('')
+                  setPasswordConfirmar('')
+                  setError('')
+                }}
+                className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={cambiarPassword}
+                disabled={saving}
+                className="flex-1 px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50"
+              >
+                {saving ? 'Guardando...' : 'Cambiar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style jsx>{`
+        @keyframes bounce-in {
+          0% { transform: scale(0.5); opacity: 0; }
+          50% { transform: scale(1.05); }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-bounce-in {
+          animation: bounce-in 0.4s ease-out;
+        }
+      `}</style>
     </div>
   )
 }

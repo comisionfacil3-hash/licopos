@@ -12,10 +12,10 @@ interface Usuario {
   telefono: string | null
   rol: 'admin' | 'gerente' | 'vendedor'
   activo: boolean
+  permisos: any
   created_at: string
 }
 
-// Permisos por defecto según rol
 const PERMISOS_DEFAULT = {
   gerente: {
     dashboard: { ver: true },
@@ -43,14 +43,30 @@ const PERMISOS_DEFAULT = {
   }
 }
 
+const PERMISOS_LABELS: Record<string, Record<string, string>> = {
+  pos: { vender: 'Realizar ventas', editar_precio: 'Editar precios', aplicar_descuento: 'Aplicar descuentos' },
+  productos: { ver: 'Ver productos', crear: 'Crear productos', editar: 'Editar productos', registrar_perdida: 'Registrar pérdidas' },
+  caja: { ver: 'Ver caja', abrir: 'Abrir caja', cerrar: 'Cerrar caja', retiros: 'Hacer retiros' },
+  ventas: { ver_propias: 'Ver ventas propias', ver_todas: 'Ver todas las ventas', anular: 'Anular ventas' },
+  compras: { ver: 'Ver compras', crear: 'Registrar compras' },
+  gastos: { ver: 'Ver gastos', crear: 'Registrar gastos' },
+  creditos: { ver: 'Ver créditos', registrar_pago: 'Registrar pagos' },
+  clientes: { ver: 'Ver clientes', crear: 'Crear clientes', editar: 'Editar clientes' },
+  reportes: { ver: 'Ver reportes' }
+}
+
 export default function UsuariosPage() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
+  const [showExitoModal, setShowExitoModal] = useState(false)
+  const [credencialesCreadas, setCredencialesCreadas] = useState({ email: '', password: '' })
+  const [showPermisosModal, setShowPermisosModal] = useState(false)
+  const [usuarioPermisos, setUsuarioPermisos] = useState<Usuario | null>(null)
+  const [permisosTemp, setPermisosTemp] = useState<any>({})
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  // Formulario
   const [formData, setFormData] = useState({
     nombre: '',
     email: '',
@@ -62,7 +78,6 @@ export default function UsuariosPage() {
   const { usuario } = useAuth()
   const supabase = createClient()
 
-  // Solo gerentes y admins pueden gestionar usuarios
   const puedeGestionar = usuario?.rol === 'admin' || usuario?.rol === 'gerente'
 
   useEffect(() => {
@@ -82,21 +97,15 @@ export default function UsuariosPage() {
 
       if (error) throw error
       setUsuarios(data || [])
-    } catch (error) {
-      console.error('Error fetching usuarios:', error)
+    } catch (err) {
+      console.error('Error:', err)
     } finally {
       setLoading(false)
     }
   }
 
   const abrirModal = () => {
-    setFormData({
-      nombre: '',
-      email: '',
-      password: '',
-      telefono: '',
-      rol: 'vendedor',
-    })
+    setFormData({ nombre: '', email: '', password: '', telefono: '', rol: 'vendedor' })
     setError('')
     setShowModal(true)
   }
@@ -106,36 +115,26 @@ export default function UsuariosPage() {
     setError('')
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
+  const handleSubmit = async () => {
+    if (!formData.nombre.trim() || !formData.email.trim() || !formData.password.trim()) {
+      setError('Nombre, email y contraseña son obligatorios')
+      return
+    }
 
-    // Validaciones
-    if (!formData.nombre.trim()) {
-      setError('El nombre es obligatorio')
-      return
-    }
-    if (!formData.email.trim()) {
-      setError('El email es obligatorio')
-      return
-    }
-    if (!formData.password || formData.password.length < 6) {
+    if (formData.password.length < 6) {
       setError('La contraseña debe tener al menos 6 caracteres')
       return
     }
 
     setSaving(true)
+    setError('')
 
     try {
-      // 1. Crear usuario en Supabase Auth
+      // Crear en Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email.trim().toLowerCase(),
         password: formData.password,
-        options: {
-          data: {
-            nombre: formData.nombre.trim(),
-          }
-        }
+        options: { data: { nombre: formData.nombre.trim() } }
       })
 
       if (authError) {
@@ -144,15 +143,17 @@ export default function UsuariosPage() {
         } else {
           setError(authError.message)
         }
+        setSaving(false)
         return
       }
 
       if (!authData.user) {
         setError('Error al crear el usuario')
+        setSaving(false)
         return
       }
 
-      // 2. Crear registro en tabla usuarios
+      // Crear en tabla usuarios
       const { error: dbError } = await supabase
         .from('usuarios')
         .insert({
@@ -169,14 +170,19 @@ export default function UsuariosPage() {
 
       if (dbError) {
         console.error('Error creating user record:', dbError)
-        setError('Error al guardar el usuario en la base de datos')
+        setError('Error al guardar el usuario')
         return
       }
 
-      // Éxito
+      // Mostrar modal de éxito con credenciales
+      setCredencialesCreadas({
+        email: formData.email.trim().toLowerCase(),
+        password: formData.password
+      })
+      
       await fetchUsuarios()
       cerrarModal()
-      alert(`Usuario "${formData.nombre}" creado exitosamente.\n\nCredenciales:\nEmail: ${formData.email}\nContraseña: ${formData.password}`)
+      setShowExitoModal(true)
 
     } catch (error: any) {
       console.error('Error:', error)
@@ -187,7 +193,6 @@ export default function UsuariosPage() {
   }
 
   const toggleActivo = async (usuarioItem: Usuario) => {
-    // No permitir desactivarse a sí mismo
     if (usuarioItem.id === usuario?.id) {
       alert('No puedes desactivarte a ti mismo')
       return
@@ -202,39 +207,67 @@ export default function UsuariosPage() {
       if (error) throw error
 
       setUsuarios(prev =>
-        prev.map(u =>
-          u.id === usuarioItem.id ? { ...u, activo: !u.activo } : u
-        )
+        prev.map(u => u.id === usuarioItem.id ? { ...u, activo: !u.activo } : u)
       )
     } catch (error) {
-      console.error('Error updating usuario:', error)
-      alert('Error al actualizar el usuario')
+      console.error('Error:', error)
+    }
+  }
+
+  const abrirPermisos = (usuarioItem: Usuario) => {
+    setUsuarioPermisos(usuarioItem)
+    setPermisosTemp(usuarioItem.permisos || PERMISOS_DEFAULT.vendedor)
+    setShowPermisosModal(true)
+  }
+
+  const togglePermiso = (modulo: string, permiso: string) => {
+    setPermisosTemp((prev: any) => ({
+      ...prev,
+      [modulo]: {
+        ...prev[modulo],
+        [permiso]: !prev[modulo]?.[permiso]
+      }
+    }))
+  }
+
+  const guardarPermisos = async () => {
+    if (!usuarioPermisos) return
+
+    setSaving(true)
+    try {
+      const { error } = await supabase
+        .from('usuarios')
+        .update({ permisos: permisosTemp })
+        .eq('id', usuarioPermisos.id)
+
+      if (error) throw error
+
+      setUsuarios(prev =>
+        prev.map(u => u.id === usuarioPermisos.id ? { ...u, permisos: permisosTemp } : u)
+      )
+      setShowPermisosModal(false)
+    } catch (error) {
+      console.error('Error:', error)
+    } finally {
+      setSaving(false)
     }
   }
 
   const getRolBadge = (rol: string) => {
     switch (rol) {
-      case 'admin':
-        return 'bg-red-100 text-red-700'
-      case 'gerente':
-        return 'bg-blue-100 text-blue-700'
-      case 'vendedor':
-        return 'bg-green-100 text-green-700'
-      default:
-        return 'bg-gray-100 text-gray-700'
+      case 'admin': return 'bg-red-100 text-red-700'
+      case 'gerente': return 'bg-blue-100 text-blue-700'
+      case 'vendedor': return 'bg-green-100 text-green-700'
+      default: return 'bg-gray-100 text-gray-700'
     }
   }
 
   const getRolLabel = (rol: string) => {
     switch (rol) {
-      case 'admin':
-        return 'Administrador'
-      case 'gerente':
-        return 'Gerente'
-      case 'vendedor':
-        return 'Vendedor'
-      default:
-        return rol
+      case 'admin': return 'Administrador'
+      case 'gerente': return 'Gerente'
+      case 'vendedor': return 'Vendedor'
+      default: return rol
     }
   }
 
@@ -242,13 +275,13 @@ export default function UsuariosPage() {
     return (
       <div className="p-4 pb-24">
         <div className="text-center py-12">
-          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-          </svg>
-          <h3 className="mt-2 text-sm font-medium text-gray-900">Acceso Restringido</h3>
-          <p className="mt-1 text-sm text-gray-500">
-            No tienes permisos para gestionar usuarios
-          </p>
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium text-gray-900">Acceso Restringido</h3>
+          <p className="text-gray-500">No tienes permisos para gestionar usuarios</p>
         </div>
       </div>
     )
@@ -271,260 +304,209 @@ export default function UsuariosPage() {
 
   return (
     <div className="p-4 pb-24">
+      {/* Modal Éxito con Credenciales */}
+      {showExitoModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm animate-bounce-in">
+            <div className="p-6 text-center">
+              <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">¡Usuario Creado!</h2>
+              <p className="text-gray-500 mb-4">Guarda estas credenciales</p>
+              
+              <div className="bg-gray-50 rounded-xl p-4 text-left space-y-2">
+                <div>
+                  <p className="text-xs text-gray-500">Email</p>
+                  <p className="font-mono text-sm font-medium text-gray-900">{credencialesCreadas.email}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Contraseña</p>
+                  <p className="font-mono text-sm font-medium text-gray-900">{credencialesCreadas.password}</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-100">
+              <button
+                onClick={() => setShowExitoModal(false)}
+                className="w-full py-2.5 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Usuarios</h1>
-          <p className="text-gray-600">Gestiona los usuarios de tu sucursal</p>
+          <p className="text-gray-500 text-sm">Gestiona los usuarios de tu sucursal</p>
         </div>
-
-        <button
-          onClick={abrirModal}
-          className="btn-primary"
-        >
-          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+        <button onClick={abrirModal} className="px-4 py-2 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600 flex items-center gap-2">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
           Nuevo
         </button>
       </div>
 
-      {/* Lista de usuarios */}
+      {/* Lista */}
       <div className="space-y-3">
         {usuarios.map((usuarioItem) => (
-          <div
-            key={usuarioItem.id}
-            className={`bg-white rounded-xl p-4 shadow-sm border transition-all ${
-              usuarioItem.activo ? 'border-gray-200' : 'border-orange-300 bg-orange-50 opacity-75'
-            }`}
-          >
+          <div key={usuarioItem.id} className={`bg-white rounded-xl p-4 shadow-sm border transition-all ${usuarioItem.activo ? 'border-gray-100' : 'border-orange-200 bg-orange-50'}`}>
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                {/* Avatar */}
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold ${
-                  usuarioItem.activo ? 'bg-primary-500' : 'bg-gray-400'
-                }`}>
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium ${usuarioItem.activo ? 'bg-emerald-500' : 'bg-gray-400'}`}>
                   {usuarioItem.nombre.charAt(0).toUpperCase()}
                 </div>
-
                 <div>
-                  <div className="flex items-center space-x-2">
-                    <h3 className="font-semibold text-gray-900">{usuarioItem.nombre}</h3>
-                    {usuarioItem.id === usuario?.id && (
-                      <span className="text-xs bg-primary-100 text-primary-700 px-2 py-0.5 rounded-full">
-                        Tú
-                      </span>
-                    )}
-                  </div>
+                  <h3 className="font-medium text-gray-900">{usuarioItem.nombre}</h3>
                   <p className="text-sm text-gray-500">{usuarioItem.email}</p>
-                  <div className="flex items-center space-x-2 mt-1">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getRolBadge(usuarioItem.rol)}`}>
-                      {getRolLabel(usuarioItem.rol)}
-                    </span>
-                    {!usuarioItem.activo && (
-                      <span className="text-xs text-orange-600 font-medium">Inactivo</span>
-                    )}
-                  </div>
                 </div>
               </div>
-
-              {/* Acciones */}
-              {usuarioItem.id !== usuario?.id && (
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => toggleActivo(usuarioItem)}
-                    className={`p-2 rounded-lg transition-colors ${
-                      usuarioItem.activo
-                        ? 'text-orange-500 hover:bg-orange-50'
-                        : 'text-green-500 hover:bg-green-50'
-                    }`}
-                    title={usuarioItem.activo ? 'Desactivar' : 'Activar'}
-                  >
-                    {usuarioItem.activo ? (
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                      </svg>
-                    ) : (
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              )}
+              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getRolBadge(usuarioItem.rol)}`}>
+                {getRolLabel(usuarioItem.rol)}
+              </span>
             </div>
+
+            {usuarioItem.id !== usuario?.id && (
+              <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100">
+                {usuarioItem.rol === 'vendedor' && (
+                  <button
+                    onClick={() => abrirPermisos(usuarioItem)}
+                    className="flex-1 py-2 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100"
+                  >
+                    Permisos
+                  </button>
+                )}
+                <button
+                  onClick={() => toggleActivo(usuarioItem)}
+                  className={`flex-1 py-2 text-sm rounded-lg ${usuarioItem.activo ? 'text-orange-600 bg-orange-50 hover:bg-orange-100' : 'text-green-600 bg-green-50 hover:bg-green-100'}`}
+                >
+                  {usuarioItem.activo ? 'Desactivar' : 'Activar'}
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
 
       {usuarios.length === 0 && (
         <div className="text-center py-12">
-          <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-          </svg>
-          <h3 className="mt-2 text-sm font-medium text-gray-900">No hay usuarios</h3>
-          <p className="mt-1 text-sm text-gray-500">
-            Comienza agregando usuarios a tu sucursal
-          </p>
-          <button
-            onClick={abrirModal}
-            className="btn-primary mt-4"
-          >
-            Agregar Usuario
-          </button>
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium text-gray-900">No hay usuarios</h3>
+          <p className="text-gray-500">Comienza agregando usuarios</p>
         </div>
       )}
 
       {/* Modal Crear Usuario */}
       {showModal && (
-        <div
-          className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4"
-          onClick={cerrarModal}
-        >
-          <div
-            className="bg-white rounded-2xl w-full max-w-md"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-lg font-semibold text-gray-900">Nuevo Usuario</h3>
-                <button
-                  onClick={cerrarModal}
-                  className="p-2 hover:bg-gray-100 rounded-lg"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">Nuevo Usuario</h2>
+            </div>
+            <div className="p-6 space-y-4">
               {error && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm text-red-600">{error}</p>
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {error}
                 </div>
               )}
-
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <label className="label">Nombre Completo *</label>
-                  <input
-                    type="text"
-                    value={formData.nombre}
-                    onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
-                    className="input"
-                    placeholder="Ej: Juan Pérez"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="label">Email *</label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className="input"
-                    placeholder="correo@ejemplo.com"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="label">Contraseña *</label>
-                  <input
-                    type="text"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    className="input"
-                    placeholder="Mínimo 6 caracteres"
-                    required
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    El usuario podrá cambiarla después
-                  </p>
-                </div>
-
-                <div>
-                  <label className="label">Teléfono</label>
-                  <input
-                    type="tel"
-                    value={formData.telefono}
-                    onChange={(e) => setFormData({ ...formData, telefono: e.target.value })}
-                    className="input"
-                    placeholder="Opcional"
-                  />
-                </div>
-
-                <div>
-                  <label className="label">Rol *</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, rol: 'vendedor' })}
-                      className={`p-4 rounded-xl border-2 transition-all ${
-                        formData.rol === 'vendedor'
-                          ? 'border-primary-500 bg-primary-50'
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <div className="flex flex-col items-center">
-                        <svg className="w-8 h-8 text-green-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                        </svg>
-                        <span className="font-medium text-gray-900">Vendedor</span>
-                        <span className="text-xs text-gray-500 mt-1">Permisos básicos</span>
-                      </div>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, rol: 'gerente' })}
-                      className={`p-4 rounded-xl border-2 transition-all ${
-                        formData.rol === 'gerente'
-                          ? 'border-primary-500 bg-primary-50'
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <div className="flex flex-col items-center">
-                        <svg className="w-8 h-8 text-blue-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                        </svg>
-                        <span className="font-medium text-gray-900">Gerente</span>
-                        <span className="text-xs text-gray-500 mt-1">Permisos completos</span>
-                      </div>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex space-x-3 pt-4">
-                  <button
-                    type="button"
-                    onClick={cerrarModal}
-                    className="btn-secondary flex-1"
-                    disabled={saving}
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn-primary flex-1"
-                    disabled={saving}
-                  >
-                    {saving ? (
-                      <>
-                        <span className="spinner mr-2"></span>
-                        Creando...
-                      </>
-                    ) : (
-                      'Crear Usuario'
-                    )}
-                  </button>
-                </div>
-              </form>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
+                <input type="text" value={formData.nombre} onChange={(e) => setFormData({ ...formData, nombre: e.target.value })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Nombre completo" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
+                <input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="correo@ejemplo.com" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña *</label>
+                <input type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Mínimo 6 caracteres" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+                <input type="tel" value={formData.telefono} onChange={(e) => setFormData({ ...formData, telefono: e.target.value })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Opcional" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rol</label>
+                <select value={formData.rol} onChange={(e) => setFormData({ ...formData, rol: e.target.value as any })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none">
+                  <option value="vendedor">Vendedor</option>
+                  <option value="gerente">Gerente</option>
+                </select>
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-100 flex gap-3">
+              <button onClick={cerrarModal} className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50">Cancelar</button>
+              <button onClick={handleSubmit} disabled={saving} className="flex-1 px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50">
+                {saving ? 'Creando...' : 'Crear'}
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Modal Permisos */}
+      {showPermisosModal && usuarioPermisos && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">Permisos de {usuarioPermisos.nombre}</h2>
+              <p className="text-sm text-gray-500">Configura qué puede hacer este vendedor</p>
+            </div>
+            <div className="p-6 space-y-6">
+              {Object.entries(PERMISOS_LABELS).map(([modulo, permisos]) => (
+                <div key={modulo}>
+                  <h3 className="font-medium text-gray-900 capitalize mb-3">{modulo}</h3>
+                  <div className="space-y-2">
+                    {Object.entries(permisos).map(([key, label]) => (
+                      <label key={key} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100">
+                        <span className="text-sm text-gray-700">{label}</span>
+                        <div className="relative">
+                          <input
+                            type="checkbox"
+                            checked={permisosTemp[modulo]?.[key] || false}
+                            onChange={() => togglePermiso(modulo, key)}
+                            className="sr-only"
+                          />
+                          <div className={`w-10 h-6 rounded-full transition-colors ${permisosTemp[modulo]?.[key] ? 'bg-emerald-500' : 'bg-gray-300'}`}>
+                            <div className={`w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform mt-1 ${permisosTemp[modulo]?.[key] ? 'translate-x-5' : 'translate-x-1'}`}></div>
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="p-6 border-t border-gray-100 flex gap-3">
+              <button onClick={() => setShowPermisosModal(false)} className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50">Cancelar</button>
+              <button onClick={guardarPermisos} disabled={saving} className="flex-1 px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50">
+                {saving ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style jsx>{`
+        @keyframes bounce-in {
+          0% { transform: scale(0.5); opacity: 0; }
+          50% { transform: scale(1.05); }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-bounce-in {
+          animation: bounce-in 0.4s ease-out;
+        }
+      `}</style>
     </div>
   )
 }
