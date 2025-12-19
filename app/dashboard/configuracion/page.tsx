@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/use-auth'
+import Image from 'next/image'
 
 export default function ConfiguracionPage() {
   const [loading, setLoading] = useState(true)
@@ -14,6 +15,10 @@ export default function ConfiguracionPage() {
   const [nombre, setNombre] = useState('')
   const [telefono, setTelefono] = useState('')
   const [email, setEmail] = useState('')
+  
+  // Logo
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [uploadingLogo, setUploadingLogo] = useState(false)
   
   // PIN
   const [showPinModal, setShowPinModal] = useState(false)
@@ -35,27 +40,43 @@ export default function ConfiguracionPage() {
 
   useEffect(() => {
     if (usuario?.id) {
-      fetchPerfil()
+      fetchData()
     }
   }, [usuario?.id])
 
-  const fetchPerfil = async () => {
+  const fetchData = async () => {
     try {
       setLoading(true)
-      const { data, error } = await supabase
+      
+      // Obtener datos del usuario
+      const { data: userData, error: userError } = await supabase
         .from('usuarios')
         .select('nombre, telefono, email, pin')
         .eq('id', usuario?.id)
         .single()
 
-      if (error) throw error
+      if (userError) throw userError
 
-      if (data) {
-        setNombre(data.nombre || '')
-        setTelefono(data.telefono || '')
-        setEmail(data.email || '')
-        setTienePinActual(!!data.pin)
+      if (userData) {
+        setNombre(userData.nombre || '')
+        setTelefono(userData.telefono || '')
+        setEmail(userData.email || '')
+        setTienePinActual(!!userData.pin)
       }
+
+      // Obtener logo de la sucursal
+      if (usuario?.sucursal_id) {
+        const { data: sucursalData } = await supabase
+          .from('sucursales')
+          .select('logo_url')
+          .eq('id', usuario.sucursal_id)
+          .single()
+
+        if (sucursalData?.logo_url) {
+          setLogoUrl(sucursalData.logo_url)
+        }
+      }
+
     } catch (err) {
       console.error('Error:', err)
     } finally {
@@ -95,6 +116,85 @@ export default function ConfiguracionPage() {
       setError('Error al guardar los cambios')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const subirLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validar tipo de archivo
+    if (!file.type.startsWith('image/')) {
+      alert('Por favor selecciona una imagen')
+      return
+    }
+
+    // Validar tamaño (máx 2MB)
+    if (file.size > 2 * 1024 * 1024) {
+      alert('La imagen no debe superar 2MB')
+      return
+    }
+
+    setUploadingLogo(true)
+
+    try {
+      // Generar nombre único
+      const fileExt = file.name.split('.').pop()
+      const fileName = `${usuario?.sucursal_id}-${Date.now()}.${fileExt}`
+      const filePath = `logos/${fileName}`
+
+      // Subir a Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from('product-images')
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: false
+        })
+
+      if (uploadError) throw uploadError
+
+      // Obtener URL pública
+      const { data: urlData } = supabase.storage
+        .from('product-images')
+        .getPublicUrl(filePath)
+
+      // Actualizar base de datos
+      const { error: updateError } = await supabase
+        .from('sucursales')
+        .update({ logo_url: urlData.publicUrl })
+        .eq('id', usuario?.sucursal_id)
+
+      if (updateError) throw updateError
+
+      setLogoUrl(urlData.publicUrl)
+      mostrarExito('Logo actualizado')
+
+    } catch (err) {
+      console.error('Error:', err)
+      alert('Error al subir el logo')
+    } finally {
+      setUploadingLogo(false)
+    }
+  }
+
+  const eliminarLogo = async () => {
+    if (!confirm('¿Eliminar el logo actual?')) return
+
+    try {
+      // Actualizar base de datos
+      const { error } = await supabase
+        .from('sucursales')
+        .update({ logo_url: null })
+        .eq('id', usuario?.sucursal_id)
+
+      if (error) throw error
+
+      setLogoUrl(null)
+      mostrarExito('Logo eliminado')
+
+    } catch (err) {
+      console.error('Error:', err)
+      alert('Error al eliminar el logo')
     }
   }
 
@@ -231,7 +331,7 @@ export default function ConfiguracionPage() {
 
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Configuración</h1>
-        <p className="text-gray-500 text-sm">Gestiona tu perfil y seguridad</p>
+        <p className="text-gray-500 text-sm">Gestiona tu perfil y negocio</p>
       </div>
 
       {/* Mi Perfil */}
@@ -279,6 +379,75 @@ export default function ConfiguracionPage() {
           >
             {saving ? 'Guardando...' : 'Guardar Cambios'}
           </button>
+        </div>
+      </div>
+
+      {/* Logo del Negocio */}
+      <div className="bg-white rounded-xl border border-gray-100 p-5 mb-4">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Logo del Negocio</h2>
+        <p className="text-sm text-gray-500 mb-4">Este logo aparecerá en las cotizaciones</p>
+        
+        <div className="space-y-4">
+          {logoUrl ? (
+            <div className="flex items-center gap-4">
+              <div className="relative w-32 h-32 border-2 border-gray-200 rounded-xl overflow-hidden bg-gray-50">
+                <Image
+                  src={logoUrl}
+                  alt="Logo"
+                  fill
+                  className="object-contain p-2"
+                />
+              </div>
+              <div className="flex-1 space-y-2">
+                <label className="block">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={subirLogo}
+                    className="hidden"
+                    disabled={uploadingLogo}
+                  />
+                  <span className="inline-block px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 cursor-pointer text-sm">
+                    {uploadingLogo ? 'Subiendo...' : 'Cambiar Logo'}
+                  </span>
+                </label>
+                <button
+                  onClick={eliminarLogo}
+                  className="block px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm"
+                >
+                  Eliminar Logo
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer hover:border-emerald-500 transition-colors bg-gray-50">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={subirLogo}
+                  className="hidden"
+                  disabled={uploadingLogo}
+                />
+                <div className="text-center">
+                  {uploadingLogo ? (
+                    <>
+                      <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                      <p className="text-sm text-gray-600">Subiendo...</p>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-12 h-12 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      <p className="text-sm text-gray-600 mb-1">Haz clic para subir un logo</p>
+                      <p className="text-xs text-gray-400">PNG, JPG, WEBP (máx. 2MB)</p>
+                    </>
+                  )}
+                </div>
+              </label>
+            </div>
+          )}
         </div>
       </div>
 

@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/lib/hooks/use-auth'
 import { formatCurrency } from '@/lib/utils/format'
 import { formatDateTime } from '@/lib/utils/timezone'
+import * as XLSX from 'xlsx'
 
 interface Inventario {
   id: string
@@ -54,6 +55,9 @@ export default function InventarioPage() {
   const [showCancelarModal, setShowCancelarModal] = useState(false)
   const [showExito, setShowExito] = useState(false)
   const [mensajeExito, setMensajeExito] = useState('')
+  const [showHistorialModal, setShowHistorialModal] = useState(false)
+  const [inventarioSeleccionado, setInventarioSeleccionado] = useState<Inventario | null>(null)
+  const [detallesHistorial, setDetallesHistorial] = useState<DetalleInventario[]>([])
 
   const { usuario } = useAuth()
   const supabase = createClient()
@@ -70,14 +74,12 @@ export default function InventarioPage() {
     setLoading(true)
     try {
       // 1. Buscar inventario en proceso
-      const { data: invActivo, error: invError } = await supabase
+      const { data: invActivo } = await supabase
         .from('inventarios')
         .select('*')
         .eq('sucursal_id', usuario.sucursal_id)
         .eq('estado', 'en_proceso')
         .maybeSingle()
-
-      console.log('Inventario activo:', invActivo, 'Error:', invError)
 
       if (invActivo) {
         setInventarioActivo(invActivo)
@@ -216,7 +218,7 @@ export default function InventarioPage() {
   }
 
   // ============================================
-  // INICIAR INVENTARIO - Adaptado a tu estructura
+  // INICIAR INVENTARIO - SIN COLUMNAS GENERADAS
   // ============================================
   const iniciarInventario = async () => {
     if (!usuario?.sucursal_id || !usuario?.id) return
@@ -244,16 +246,12 @@ export default function InventarioPage() {
         .eq('sucursal_id', usuario.sucursal_id)
         .eq('activo', true)
 
-      if (prodError) {
-        console.error('Error obteniendo productos:', prodError)
-        throw new Error('Error al obtener productos')
-      }
-
+      if (prodError) throw new Error('Error al obtener productos')
       if (!productos || productos.length === 0) {
         throw new Error('No hay productos activos en esta sucursal')
       }
 
-      // 3. Crear el inventario (SIN empresa_id, usando TU estructura)
+      // 3. Crear el inventario
       const { data: nuevoInventario, error: invError } = await supabase
         .from('inventarios')
         .insert({
@@ -268,19 +266,14 @@ export default function InventarioPage() {
         .select()
         .single()
 
-      if (invError) {
-        console.error('Error creando inventario:', invError)
-        throw new Error('Error al crear el inventario: ' + invError.message)
-      }
+      if (invError) throw new Error('Error al crear el inventario')
 
-      // 4. Crear los detalles del inventario
+      // 4. Crear detalles SIN diferencia ni costo_diferencia (son columnas generadas)
       const detallesAInsertar = productos.map(p => ({
         inventario_id: nuevoInventario.id,
         producto_id: p.id,
         stock_sistema: p.stock_actual || 0,
         stock_contado: null,
-        diferencia: 0,
-        costo_diferencia: 0,
         costo_unitario: p.precio_compra || 0,
         contado: false
       }))
@@ -290,8 +283,6 @@ export default function InventarioPage() {
         .insert(detallesAInsertar)
 
       if (detError) {
-        console.error('Error creando detalles:', detError)
-        // Intentar eliminar el inventario creado
         await supabase.from('inventarios').delete().eq('id', nuevoInventario.id)
         throw new Error('Error al crear detalles del inventario')
       }
@@ -308,96 +299,41 @@ export default function InventarioPage() {
     }
   }
 
-  // ============================================
-  // ACTUALIZAR CONTEO - Guarda diferencia también
-  // ============================================
   const actualizarConteo = async (detalleId: string, stockContado: number | null) => {
-    const detalle = detalles.find(d => d.id === detalleId)
-    if (!detalle) return
-
-    const nuevaDiferencia = stockContado !== null ? stockContado - detalle.stock_sistema : 0
-    const nuevoCostoDiferencia = nuevaDiferencia * (detalle.costo_unitario || 0)
-
-    try {
-      const { error } = await supabase
+    if (stockContado === null) {
+      // Marcar como no contado
+      await supabase
         .from('inventario_detalles')
-        .update({
-          stock_contado: stockContado,
-          contado: stockContado !== null,
-          diferencia: nuevaDiferencia,
-          costo_diferencia: nuevoCostoDiferencia
-        })
+        .update({ stock_contado: null, contado: false })
         .eq('id', detalleId)
-
-      if (error) throw error
-
-      // Actualizar estado local
-      setDetalles(prev => prev.map(d => {
-        if (d.id === detalleId) {
-          return { 
-            ...d, 
-            stock_contado: stockContado, 
-            contado: stockContado !== null,
-            diferencia: nuevaDiferencia,
-            costo_diferencia: nuevoCostoDiferencia
-          }
-        }
-        return d
-      }))
-
-      // Actualizar contadores en inventario
-      if (inventarioActivo) {
-        const nuevosContados = detalles.filter(d => 
-          d.id === detalleId ? stockContado !== null : d.contado
-        ).length
-        const nuevasConDiferencia = detalles.filter(d => 
-          d.id === detalleId 
-            ? (stockContado !== null && nuevaDiferencia !== 0)
-            : (d.contado && d.diferencia !== 0)
-        ).length
-
-        await supabase
-          .from('inventarios')
-          .update({
-            productos_contados: nuevosContados,
-            productos_con_diferencia: nuevasConDiferencia
-          })
-          .eq('id', inventarioActivo.id)
-      }
-    } catch (err) {
-      console.error('Error:', err)
+    } else {
+      // Marcar como contado
+      await supabase
+        .from('inventario_detalles')
+        .update({ stock_contado: stockContado, contado: true })
+        .eq('id', detalleId)
     }
+
+    await loadData()
   }
 
-  // ============================================
-  // APLICAR AJUSTES
-  // ============================================
   const aplicarAjustes = async () => {
     if (!inventarioActivo) return
 
     setAplicando(true)
     try {
-      // 1. Actualizar el stock de cada producto contado
-      const detallesContados = detalles.filter(d => d.contado && d.stock_contado !== null)
-      
-      for (const detalle of detallesContados) {
-        const { error } = await supabase
+      // Actualizar stock de productos con diferencia
+      for (const detalle of detalles.filter(d => d.contado && d.diferencia !== 0)) {
+        await supabase
           .from('productos')
-          .update({ 
-            stock_actual: detalle.stock_contado,
-            updated_at: new Date().toISOString()
-          })
+          .update({ stock_actual: detalle.stock_contado })
           .eq('id', detalle.producto_id)
-
-        if (error) {
-          console.error('Error actualizando producto:', detalle.producto_id, error)
-        }
       }
 
-      // 2. Cerrar el inventario
-      const { error: closeError } = await supabase
+      // Marcar inventario como completado
+      await supabase
         .from('inventarios')
-        .update({ 
+        .update({
           estado: 'completado',
           fecha_cierre: new Date().toISOString(),
           productos_contados: estadisticas.contados,
@@ -405,15 +341,13 @@ export default function InventarioPage() {
         })
         .eq('id', inventarioActivo.id)
 
-      if (closeError) throw closeError
-
       setShowAplicarModal(false)
-      mostrarExito(`¡Inventario completado! Se ajustaron ${detallesContados.length} productos.`)
+      mostrarExito('¡Inventario aplicado exitosamente!')
       await loadData()
 
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error:', err)
-      alert(err.message || 'Error al aplicar ajustes')
+      alert('Error al aplicar los ajustes')
     } finally {
       setAplicando(false)
     }
@@ -423,23 +357,111 @@ export default function InventarioPage() {
     if (!inventarioActivo) return
 
     try {
-      const { error } = await supabase
+      await supabase
         .from('inventarios')
-        .update({ 
-          estado: 'cancelado', 
-          fecha_cierre: new Date().toISOString() 
-        })
+        .update({ estado: 'cancelado', fecha_cierre: new Date().toISOString() })
         .eq('id', inventarioActivo.id)
-
-      if (error) throw error
 
       setShowCancelarModal(false)
       mostrarExito('Inventario cancelado')
       await loadData()
     } catch (err) {
       console.error('Error:', err)
-      alert('Error al cancelar el inventario')
+      alert('Error al cancelar')
     }
+  }
+
+  const verHistorial = async (inventario: Inventario) => {
+    setInventarioSeleccionado(inventario)
+    
+    // Cargar detalles del inventario histórico
+    const { data: dets } = await supabase
+      .from('inventario_detalles')
+      .select('*')
+      .eq('inventario_id', inventario.id)
+
+    if (dets) {
+      const productoIds = dets.map(d => d.producto_id)
+      const { data: productosData } = await supabase
+        .from('productos')
+        .select('id, nombre, codigo, categoria_id')
+        .in('id', productoIds)
+
+      const categoriaIds = [...new Set(productosData?.map(p => p.categoria_id).filter(Boolean))]
+      let categoriasMap = new Map<string, string>()
+      
+      if (categoriaIds.length > 0) {
+        const { data: categoriasData } = await supabase
+          .from('categorias')
+          .select('id, nombre')
+          .in('id', categoriaIds as string[])
+        
+        categoriasMap = new Map(categoriasData?.map(c => [c.id, c.nombre]) || [])
+      }
+
+      const productosMap = new Map(productosData?.map(p => [p.id, {
+        ...p,
+        categoria_nombre: p.categoria_id ? (categoriasMap.get(p.categoria_id) || 'Sin categoría') : 'Sin categoría'
+      }]) || [])
+
+      const detallesCompletos = dets.map(d => {
+        const prod = productosMap.get(d.producto_id)
+        return {
+          id: d.id,
+          inventario_id: d.inventario_id,
+          producto_id: d.producto_id,
+          stock_sistema: d.stock_sistema || 0,
+          stock_contado: d.stock_contado,
+          diferencia: d.diferencia || 0,
+          costo_diferencia: d.costo_diferencia || 0,
+          costo_unitario: d.costo_unitario || 0,
+          contado: d.contado || false,
+          notas: d.notas,
+          producto: {
+            id: prod?.id || d.producto_id,
+            nombre: prod?.nombre || 'Producto eliminado',
+            codigo: prod?.codigo || null,
+            categoria_nombre: prod?.categoria_nombre || 'Sin categoría'
+          }
+        }
+      })
+
+      setDetallesHistorial(detallesCompletos)
+    }
+
+    setShowHistorialModal(true)
+  }
+
+  const exportarInventarioExcel = (inventario: Inventario, detalles: DetalleInventario[]) => {
+    const data = detalles.map(d => ({
+      'Producto': d.producto.nombre,
+      'Código': d.producto.codigo || '',
+      'Categoría': d.producto.categoria_nombre,
+      'Stock Sistema': d.stock_sistema,
+      'Stock Contado': d.stock_contado ?? '',
+      'Diferencia': d.diferencia,
+      'Costo Unit.': d.costo_unitario,
+      'Costo Diferencia': d.costo_diferencia
+    }))
+
+    const ws = XLSX.utils.json_to_sheet(data)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventario')
+
+    // Ajustar ancho de columnas
+    ws['!cols'] = [
+      { wch: 30 }, // Producto
+      { wch: 12 }, // Código
+      { wch: 15 }, // Categoría
+      { wch: 12 }, // Stock Sistema
+      { wch: 12 }, // Stock Contado
+      { wch: 12 }, // Diferencia
+      { wch: 10 }, // Costo Unit
+      { wch: 15 }  // Costo Diferencia
+    ]
+
+    const fecha = formatDateTime(inventario.fecha_inicio).replace(/[/:]/g, '-')
+    XLSX.writeFile(wb, `inventario_${fecha}.xlsx`)
   }
 
   if (loading) {
@@ -453,9 +475,7 @@ export default function InventarioPage() {
     )
   }
 
-  // ============================
-  // VISTA SIN INVENTARIO ACTIVO
-  // ============================
+  // Sin inventario activo - mostrar historial
   if (!inventarioActivo) {
     return (
       <div className="p-4 pb-24 max-w-4xl mx-auto">
@@ -473,19 +493,19 @@ export default function InventarioPage() {
           </div>
         )}
 
-        {/* Modal Iniciar Inventario */}
+        {/* Modal Iniciar */}
         {showIniciarModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-2xl w-full max-w-sm animate-bounce-in">
               <div className="p-6 text-center">
                 <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                   </svg>
                 </div>
                 <h2 className="text-xl font-bold text-gray-900 mb-2">Iniciar Inventario</h2>
-                <p className="text-gray-500 mb-6">
-                  Se creará una lista con todos los productos activos para que puedas contar el stock físico.
+                <p className="text-gray-500 mb-4">
+                  Se iniciará el conteo de todos los productos activos de tu sucursal.
                 </p>
               </div>
               <div className="p-6 border-t border-gray-100 flex gap-3">
@@ -503,7 +523,7 @@ export default function InventarioPage() {
                   {iniciando ? (
                     <>
                       <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      Creando...
+                      Iniciando...
                     </>
                   ) : 'Iniciar'}
                 </button>
@@ -512,56 +532,149 @@ export default function InventarioPage() {
           </div>
         )}
 
+        {/* Modal Historial Detalle */}
+        {showHistorialModal && inventarioSeleccionado && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+              <div className="p-6 border-b border-gray-100">
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-xl font-bold text-gray-900">Detalle de Inventario</h2>
+                  <button
+                    onClick={() => setShowHistorialModal(false)}
+                    className="p-2 hover:bg-gray-100 rounded-lg"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <p className="text-sm text-gray-500">
+                  {formatDateTime(inventarioSeleccionado.fecha_inicio)}
+                  {inventarioSeleccionado.fecha_cierre && ` - ${formatDateTime(inventarioSeleccionado.fecha_cierre)}`}
+                </p>
+                <div className="flex gap-3 mt-3">
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                    inventarioSeleccionado.estado === 'completado' ? 'bg-green-100 text-green-700' :
+                    inventarioSeleccionado.estado === 'cancelado' ? 'bg-red-100 text-red-700' :
+                    'bg-gray-100 text-gray-700'
+                  }`}>
+                    {inventarioSeleccionado.estado === 'completado' ? '✓ Completado' : '✗ Cancelado'}
+                  </span>
+                  <button
+                    onClick={() => exportarInventarioExcel(inventarioSeleccionado, detallesHistorial)}
+                    className="px-3 py-1 bg-emerald-500 text-white rounded-full text-xs font-medium hover:bg-emerald-600 flex items-center gap-1"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Excel
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="space-y-2">
+                  {detallesHistorial.map(detalle => (
+                    <div key={detalle.id} className={`p-3 rounded-lg border ${
+                      detalle.diferencia > 0 ? 'bg-blue-50 border-blue-200' :
+                      detalle.diferencia < 0 ? 'bg-red-50 border-red-200' :
+                      'bg-gray-50 border-gray-200'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-medium text-gray-900">{detalle.producto.nombre}</p>
+                          <p className="text-xs text-gray-500">{detalle.producto.codigo || 'Sin código'}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm">
+                            Sistema: <span className="font-medium">{detalle.stock_sistema}</span>
+                          </p>
+                          <p className="text-sm">
+                            Físico: <span className="font-medium">{detalle.stock_contado ?? '-'}</span>
+                          </p>
+                          {detalle.diferencia !== 0 && (
+                            <p className={`text-sm font-bold ${
+                              detalle.diferencia > 0 ? 'text-blue-600' : 'text-red-600'
+                            }`}>
+                              Dif: {detalle.diferencia > 0 ? '+' : ''}{detalle.diferencia}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Inventario</h1>
-            <p className="text-gray-500 text-sm">Conteo físico de productos</p>
+            <p className="text-gray-500 text-sm">No hay inventario activo</p>
           </div>
-        </div>
-
-        <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
-          <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-10 h-10 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-            </svg>
-          </div>
-          <h3 className="text-xl font-bold text-gray-900 mb-2">Iniciar Conteo de Inventario</h3>
-          <p className="text-gray-500 mb-6 max-w-md mx-auto">
-            Realiza un conteo físico de todos tus productos y ajusta las diferencias automáticamente.
-          </p>
           <button
             onClick={() => setShowIniciarModal(true)}
-            className="px-6 py-3 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600"
+            className="px-4 py-2 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600 flex items-center gap-2"
           >
-            Empezar Inventario
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Iniciar Inventario
           </button>
         </div>
 
         {/* Historial */}
-        {historial.length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-lg font-bold text-gray-900 mb-4">Inventarios Anteriores</h2>
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Historial</h2>
+          {historial.length === 0 ? (
+            <div className="text-center py-12 bg-gray-50 rounded-xl">
+              <p className="text-gray-500">No hay inventarios realizados</p>
+            </div>
+          ) : (
             <div className="space-y-3">
-              {historial.slice(0, 5).map(inv => (
+              {historial.map(inv => (
                 <div key={inv.id} className="bg-white rounded-xl border border-gray-100 p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="font-medium text-gray-900">{formatDateTime(inv.fecha_inicio)}</span>
-                      <span className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
-                        inv.estado === 'completado' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700'
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-gray-900">Inventario</span>
+                      <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
+                        inv.estado === 'completado' ? 'bg-green-100 text-green-700' :
+                        inv.estado === 'cancelado' ? 'bg-red-100 text-red-700' :
+                        'bg-gray-100 text-gray-700'
                       }`}>
                         {inv.estado === 'completado' ? 'Completado' : 'Cancelado'}
                       </span>
                     </div>
-                    <span className="text-sm text-gray-500">
-                      {inv.productos_contados || 0}/{inv.total_productos || 0} contados
-                    </span>
+                    <span className="text-sm text-gray-500">{formatDateTime(inv.fecha_inicio)}</span>
                   </div>
+                  <div className="grid grid-cols-3 gap-2 text-sm mt-3">
+                    <div>
+                      <p className="text-gray-500">Total</p>
+                      <p className="font-medium">{inv.total_productos}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Contados</p>
+                      <p className="font-medium">{inv.productos_contados}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-500">Diferencias</p>
+                      <p className="font-medium">{inv.productos_con_diferencia}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => verHistorial(inv)}
+                    className="w-full mt-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm font-medium"
+                  >
+                    Ver Detalle
+                  </button>
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         <style jsx>{`
           @keyframes bounce-in {
@@ -577,9 +690,7 @@ export default function InventarioPage() {
     )
   }
 
-  // ============================
-  // VISTA CON INVENTARIO ACTIVO
-  // ============================
+  // Con inventario activo - modo conteo
   return (
     <div className="p-4 pb-24 max-w-4xl mx-auto">
       {/* Modal Éxito */}
@@ -596,44 +707,34 @@ export default function InventarioPage() {
         </div>
       )}
 
-      {/* Modal Aplicar Ajustes */}
+      {/* Modal Aplicar */}
       {showAplicarModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm animate-bounce-in">
             <div className="p-6 text-center">
-              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-bold text-gray-900 mb-2">Aplicar Ajustes</h2>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">¿Aplicar Ajustes?</h2>
               <p className="text-gray-500 mb-4">
-                {estadisticas.conDiferencia > 0 
-                  ? `Se encontraron ${estadisticas.conDiferencia} productos con diferencias.`
-                  : 'No se encontraron diferencias.'}
+                Se actualizará el stock de {estadisticas.conDiferencia} producto(s) con diferencia.
               </p>
-              <div className="bg-gray-50 rounded-xl p-4 text-left space-y-2 mb-4">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">Productos contados:</span>
-                  <span className="font-medium">{estadisticas.contados}</span>
+              {estadisticas.diferenciaFaltante > 0 && (
+                <div className="bg-red-50 rounded-lg p-3 mb-3">
+                  <p className="text-sm text-red-700">
+                    Faltante: {formatCurrency(estadisticas.diferenciaFaltante)}
+                  </p>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">Con diferencias:</span>
-                  <span className="font-medium">{estadisticas.conDiferencia}</span>
+              )}
+              {estadisticas.diferenciaSobrante > 0 && (
+                <div className="bg-blue-50 rounded-lg p-3 mb-3">
+                  <p className="text-sm text-blue-700">
+                    Sobrante: {formatCurrency(estadisticas.diferenciaSobrante)}
+                  </p>
                 </div>
-                {estadisticas.diferenciaSobrante > 0 && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Sobrante:</span>
-                    <span className="font-medium text-blue-600">+{formatCurrency(estadisticas.diferenciaSobrante)}</span>
-                  </div>
-                )}
-                {estadisticas.diferenciaFaltante > 0 && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">Faltante:</span>
-                    <span className="font-medium text-red-600">-{formatCurrency(estadisticas.diferenciaFaltante)}</span>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
             <div className="p-6 border-t border-gray-100 flex gap-3">
               <button

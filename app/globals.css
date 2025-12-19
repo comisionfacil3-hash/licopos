@@ -174,7 +174,11 @@
   }
 }
 
-/* Animaciones personalizadas */
+/* ============================================
+   ANIMACIONES PERSONALIZADAS
+   ============================================ */
+
+/* Animación fadeIn (existente) */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -190,76 +194,42 @@
   animation: fadeIn 0.3s ease-in-out;
 }
 
-/* Estilos para PWA */
-@media (display-mode: standalone) {
-  body {
-    user-select: none;
-    -webkit-user-select: none;
+/* ⭐ NUEVA: Animación bounce-in (para modales y cards del admin) */
+@keyframes bounce-in {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
   }
 }
 
-/* Responsive breakpoints personalizados */
-@media (max-width: 640px) {
-  .mobile-padding {
-    @apply px-3 py-2;
+.animate-bounce-in {
+  animation: bounce-in 0.4s ease-out;
+}
+
+/* ⭐ NUEVA: Animación slide-up (para elementos que aparecen desde abajo) */
+@keyframes slide-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
   }
 }
 
-/* Mejoras para accesibilidad */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
 }
 
-/* Dark mode support (futuro) */
-@media (prefers-color-scheme: dark) {
-  /* Estilos para modo oscuro - implementar más adelante */
-}
-
-/* Estilos adicionales para módulo de productos */
-
-.badge {
-  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-}
-
-.badge-success {
-  @apply bg-green-100 text-green-800;
-}
-
-.badge-error {
-  @apply bg-red-100 text-red-800;
-}
-
-.badge-warning {
-  @apply bg-orange-100 text-orange-800;
-}
-
-.badge-info {
-  @apply bg-blue-100 text-blue-800;
-}
-
-/* Spinner para loading */
-.spinner {
-  @apply inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin;
-}
-
-/* Mejorar inputs de número */
-input[type="number"]::-webkit-outer-spin-button,
-input[type="number"]::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-input[type="number"] {
-  -moz-appearance: textfield;
-}
-
-/* Loading skeleton mejorado */
+/* Animación pulse mejorada */
 @keyframes pulse {
   0%, 100% {
     opacity: 1;
@@ -271,4 +241,58 @@ input[type="number"] {
 
 .animate-pulse {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ============================================
+   ESTILOS PARA PWA
+   ============================================ */
+@media (display-mode: standalone) {
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
+
+/* ============================================
+   RESPONSIVE BREAKPOINTS
+   ============================================ */
+@media (max-width: 640px) {
+  .mobile-padding {
+    @apply px-3 py-2;
+  }
+}
+
+/* ============================================
+   ACCESIBILIDAD
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================
+   DARK MODE SUPPORT (futuro)
+   ============================================ */
+@media (prefers-color-scheme: dark) {
+  /* Estilos para modo oscuro - implementar más adelante */
+}
+
+/* ============================================
+   MEJORAS ADICIONALES
+   ============================================ */
+
+/* Mejorar inputs de número */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
 }

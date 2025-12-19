@@ -30,10 +30,15 @@ interface Venta {
   monto_credito: number
   estado: string
   notas: string | null
+  motivo_anulacion?: string | null
+  anulada_por?: string | null
+  anulada_at?: string | null
   created_at: string
   cliente_nombre: string | null
   cliente_telefono: string | null
   usuario_nombre: string | null
+  caja_id: string
+  cliente_id: string | null
   detalles: VentaDetalle[]
 }
 
@@ -45,6 +50,12 @@ export default function VentasPage() {
   const [ventaSeleccionada, setVentaSeleccionada] = useState<Venta | null>(null)
   const [exportando, setExportando] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  // Estados para anulación
+  const [showAnular, setShowAnular] = useState(false)
+  const [motivoAnulacion, setMotivoAnulacion] = useState('')
+  const [procesandoAnulacion, setProcesandoAnulacion] = useState(false)
+  const [showExitoAnulacion, setShowExitoAnulacion] = useState(false)
 
   const { usuario } = useAuth()
   const supabase = createClient()
@@ -192,10 +203,15 @@ switch (filtroFecha) {
           monto_credito: venta.monto_credito || 0,
           estado: venta.estado,
           notas: venta.notas,
+          motivo_anulacion: venta.motivo_anulacion,
+          anulada_por: venta.anulada_por,
+          anulada_at: venta.anulada_at,
           created_at: venta.created_at,
           cliente_nombre: venta.cliente_id ? clientesMap[venta.cliente_id]?.nombre || null : null,
           cliente_telefono: venta.cliente_id ? clientesMap[venta.cliente_id]?.telefono || null : null,
           usuario_nombre: venta.usuario_id ? usuariosMap[venta.usuario_id] || null : null,
+          caja_id: venta.caja_id,
+          cliente_id: venta.cliente_id,
           detalles: detallesVenta
         }
       })
@@ -299,6 +315,110 @@ switch (filtroFecha) {
       alert('Error al exportar el archivo')
     } finally {
       setExportando(false)
+    }
+  }
+
+  // 🔴 ANULAR VENTA (SOLO GERENTE)
+  const anularVenta = async () => {
+    if (!ventaSeleccionada || !usuario) return
+
+    // Validaciones
+    if (motivoAnulacion.trim().length < 10) {
+      alert('El motivo debe tener al menos 10 caracteres')
+      return
+    }
+
+    if (ventaSeleccionada.estado === 'anulada') {
+      alert('Esta venta ya fue anulada')
+      return
+    }
+
+    setProcesandoAnulacion(true)
+
+    try {
+      // 1. Actualizar estado de la venta
+      const { error: ventaError } = await supabase
+        .from('ventas')
+        .update({
+          estado: 'anulada',
+          motivo_anulacion: motivoAnulacion,
+          anulada_por: usuario.id,
+          anulada_at: new Date().toISOString()
+        })
+        .eq('id', ventaSeleccionada.id)
+
+      if (ventaError) throw ventaError
+
+      // 2. Devolver stock a productos (por cada detalle)
+      for (const detalle of ventaSeleccionada.detalles) {
+        // Buscar el producto por código
+        const { data: productoData } = await supabase
+          .from('productos')
+          .select('id, stock_actual')
+          .eq('codigo', detalle.producto_codigo)
+          .eq('sucursal_id', usuario.sucursal_id)
+          .single()
+
+        if (productoData) {
+          await supabase
+            .from('productos')
+            .update({ stock_actual: productoData.stock_actual + detalle.cantidad })
+            .eq('id', productoData.id)
+        }
+      }
+
+      // 3. Crear movimientos inversos en caja (egresos)
+      if (ventaSeleccionada.monto_efectivo > 0) {
+        await supabase.from('movimientos_caja').insert({
+          caja_id: ventaSeleccionada.caja_id,
+          tipo: 'egreso',
+          concepto: `Anulación Venta ${ventaSeleccionada.numero_venta}`,
+          referencia_id: ventaSeleccionada.id,
+          referencia_tipo: 'anulacion_venta',
+          monto: ventaSeleccionada.monto_efectivo,
+          metodo_pago: 'efectivo'
+        })
+      }
+
+      if (ventaSeleccionada.monto_qr > 0) {
+        await supabase.from('movimientos_caja').insert({
+          caja_id: ventaSeleccionada.caja_id,
+          tipo: 'egreso',
+          concepto: `Anulación Venta ${ventaSeleccionada.numero_venta}`,
+          referencia_id: ventaSeleccionada.id,
+          referencia_tipo: 'anulacion_venta',
+          monto: ventaSeleccionada.monto_qr,
+          metodo_pago: 'qr'
+        })
+      }
+
+      // 4. Anular crédito si existe
+      if (ventaSeleccionada.cliente_id && ventaSeleccionada.monto_credito > 0) {
+        await supabase
+          .from('creditos')
+          .update({ estado: 'cancelado' })
+          .eq('venta_id', ventaSeleccionada.id)
+      }
+
+      // Éxito
+      setShowAnular(false)
+      setVentaSeleccionada(null)
+      setShowExitoAnulacion(true)
+      setMotivoAnulacion('')
+      
+      // Recargar ventas
+      loadVentas()
+
+      // Ocultar mensaje después de 3 segundos
+      setTimeout(() => {
+        setShowExitoAnulacion(false)
+      }, 3000)
+
+    } catch (error) {
+      console.error('Error anulando venta:', error)
+      alert('Error al anular la venta')
+    } finally {
+      setProcesandoAnulacion(false)
     }
   }
 
@@ -570,14 +690,36 @@ switch (filtroFecha) {
                 </div>
               )}
 
+              {/* Mensaje venta anulada con motivo */}
               {ventaSeleccionada.estado === 'anulada' && (
-                <div className="p-3 bg-red-50 rounded-lg">
-                  <p className="text-red-700 text-sm font-medium">⚠️ Esta venta fue anulada</p>
+                <div className="p-4 bg-red-50 rounded-lg border border-red-200">
+                  <p className="text-red-700 text-sm font-bold mb-2">⚠️ Esta venta fue anulada</p>
+                  {ventaSeleccionada.motivo_anulacion && (
+                    <p className="text-red-600 text-sm">
+                      <strong>Motivo:</strong> {ventaSeleccionada.motivo_anulacion}
+                    </p>
+                  )}
+                  {ventaSeleccionada.anulada_at && (
+                    <p className="text-red-500 text-xs mt-1">
+                      {formatDateTime(ventaSeleccionada.anulada_at)}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
             
-            <div className="p-6 border-t border-gray-100">
+            <div className="p-6 border-t border-gray-100 space-y-3">
+              {/* Botón Anular - Solo para gerente/admin y venta no anulada */}
+              {(usuario?.rol === 'gerente' || usuario?.rol === 'admin') && 
+               ventaSeleccionada.estado !== 'anulada' && (
+                <button
+                  onClick={() => setShowAnular(true)}
+                  className="w-full px-4 py-3 bg-red-500 text-white rounded-xl hover:bg-red-600 font-medium"
+                >
+                  ❌ Anular Venta
+                </button>
+              )}
+
               <button
                 onClick={() => setVentaSeleccionada(null)}
                 className="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200"
@@ -585,6 +727,80 @@ switch (filtroFecha) {
                 Cerrar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de confirmación anulación */}
+      {showAnular && ventaSeleccionada && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-2xl w-full max-w-md animate-bounce-in">
+            <div className="p-6">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+
+              <h3 className="text-lg font-bold text-gray-900 text-center mb-2">
+                ¿Anular Venta {ventaSeleccionada.numero_venta}?
+              </h3>
+              <p className="text-gray-500 text-center text-sm mb-4">
+                Esta acción devolverá el stock y creará movimientos inversos en caja
+              </p>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Motivo de anulación (mínimo 10 caracteres) *
+                </label>
+                <textarea
+                  value={motivoAnulacion}
+                  onChange={(e) => setMotivoAnulacion(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none resize-none"
+                  rows={3}
+                  placeholder="Ejemplo: Cliente solicitó cancelación, error en venta, etc."
+                  disabled={procesandoAnulacion}
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  {motivoAnulacion.length}/10 caracteres mínimos
+                </p>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowAnular(false)
+                    setMotivoAnulacion('')
+                  }}
+                  disabled={procesandoAnulacion}
+                  className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={anularVenta}
+                  disabled={procesandoAnulacion || motivoAnulacion.trim().length < 10}
+                  className="flex-1 px-4 py-2 bg-red-500 text-white rounded-xl hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                >
+                  {procesandoAnulacion ? 'Anulando...' : 'Confirmar Anulación'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de éxito anulación */}
+      {showExitoAnulacion && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[70] p-4">
+          <div className="bg-white rounded-2xl p-8 text-center max-w-sm w-full animate-bounce-in">
+            <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-10 h-10 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">¡Venta Anulada!</h2>
+            <p className="text-gray-500">Stock devuelto y movimientos registrados correctamente</p>
           </div>
         </div>
       )}

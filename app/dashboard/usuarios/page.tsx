@@ -6,14 +6,12 @@ import { useAuth } from '@/lib/hooks/use-auth'
 
 interface Usuario {
   id: string
-  auth_id: string
-  email: string
   nombre: string
+  email: string
   telefono: string | null
   rol: 'admin' | 'gerente' | 'vendedor'
   activo: boolean
   permisos: any
-  created_at: string
 }
 
 const PERMISOS_DEFAULT = {
@@ -67,6 +65,9 @@ export default function UsuariosPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  // NUEVO: Permisos durante la creación
+  const [permisosCreacion, setPermisosCreacion] = useState<any>({})
+
   const [formData, setFormData] = useState({
     nombre: '',
     email: '',
@@ -85,6 +86,13 @@ export default function UsuariosPage() {
       fetchUsuarios()
     }
   }, [usuario?.sucursal_id])
+
+  // NUEVO: Inicializar permisos cuando cambia el rol
+  useEffect(() => {
+    if (showModal) {
+      setPermisosCreacion(JSON.parse(JSON.stringify(PERMISOS_DEFAULT[formData.rol])))
+    }
+  }, [formData.rol, showModal])
 
   const fetchUsuarios = async () => {
     try {
@@ -105,7 +113,9 @@ export default function UsuariosPage() {
   }
 
   const abrirModal = () => {
+    const permisosPorDefecto = JSON.parse(JSON.stringify(PERMISOS_DEFAULT.vendedor))
     setFormData({ nombre: '', email: '', password: '', telefono: '', rol: 'vendedor' })
+    setPermisosCreacion(permisosPorDefecto)
     setError('')
     setShowModal(true)
   }
@@ -113,6 +123,17 @@ export default function UsuariosPage() {
   const cerrarModal = () => {
     setShowModal(false)
     setError('')
+  }
+
+  // NUEVO: Toggle permiso durante creación
+  const togglePermisoCreacion = (modulo: string, permiso: string) => {
+    setPermisosCreacion((prev: any) => ({
+      ...prev,
+      [modulo]: {
+        ...prev[modulo],
+        [permiso]: !prev[modulo]?.[permiso]
+      }
+    }))
   }
 
   const handleSubmit = async () => {
@@ -153,6 +174,9 @@ export default function UsuariosPage() {
         return
       }
 
+      // MODIFICADO: Usar permisos personalizados para vendedor, default para gerente
+      const permisosFinales = formData.rol === 'vendedor' ? permisosCreacion : PERMISOS_DEFAULT[formData.rol]
+
       // Crear en tabla usuarios
       const { error: dbError } = await supabase
         .from('usuarios')
@@ -165,58 +189,49 @@ export default function UsuariosPage() {
           telefono: formData.telefono.trim() || null,
           rol: formData.rol,
           activo: true,
-          permisos: PERMISOS_DEFAULT[formData.rol],
+          permisos: permisosFinales,
         })
 
       if (dbError) {
-        console.error('Error creating user record:', dbError)
-        setError('Error al guardar el usuario')
+        console.error('Error DB:', dbError)
+        setError('Error al crear el usuario en la base de datos')
+        setSaving(false)
         return
       }
 
-      // Mostrar modal de éxito con credenciales
       setCredencialesCreadas({
         email: formData.email.trim().toLowerCase(),
         password: formData.password
       })
-      
-      await fetchUsuarios()
-      cerrarModal()
-      setShowExitoModal(true)
 
-    } catch (error: any) {
-      console.error('Error:', error)
-      setError('Error inesperado al crear el usuario')
+      setShowModal(false)
+      setShowExitoModal(true)
+      setTimeout(() => setShowExitoModal(false), 5000)
+      fetchUsuarios()
+
+    } catch (err) {
+      console.error('Error:', err)
+      setError('Error al crear el usuario')
     } finally {
       setSaving(false)
     }
   }
 
-  const toggleActivo = async (usuarioItem: Usuario) => {
-    if (usuarioItem.id === usuario?.id) {
-      alert('No puedes desactivarte a ti mismo')
-      return
-    }
-
+  const toggleActivo = async (id: string, activo: boolean) => {
     try {
-      const { error } = await supabase
+      await supabase
         .from('usuarios')
-        .update({ activo: !usuarioItem.activo })
-        .eq('id', usuarioItem.id)
-
-      if (error) throw error
-
-      setUsuarios(prev =>
-        prev.map(u => u.id === usuarioItem.id ? { ...u, activo: !u.activo } : u)
-      )
-    } catch (error) {
-      console.error('Error:', error)
+        .update({ activo: !activo })
+        .eq('id', id)
+      fetchUsuarios()
+    } catch (err) {
+      console.error('Error:', err)
     }
   }
 
-  const abrirPermisos = (usuarioItem: Usuario) => {
-    setUsuarioPermisos(usuarioItem)
-    setPermisosTemp(usuarioItem.permisos || PERMISOS_DEFAULT.vendedor)
+  const abrirPermisosModal = (usuario: Usuario) => {
+    setUsuarioPermisos(usuario)
+    setPermisosTemp(JSON.parse(JSON.stringify(usuario.permisos || PERMISOS_DEFAULT.vendedor)))
     setShowPermisosModal(true)
   }
 
@@ -242,46 +257,21 @@ export default function UsuariosPage() {
 
       if (error) throw error
 
-      setUsuarios(prev =>
-        prev.map(u => u.id === usuarioPermisos.id ? { ...u, permisos: permisosTemp } : u)
-      )
       setShowPermisosModal(false)
-    } catch (error) {
-      console.error('Error:', error)
+      fetchUsuarios()
+    } catch (err) {
+      console.error('Error:', err)
+      alert('Error al guardar los permisos')
     } finally {
       setSaving(false)
     }
   }
 
-  const getRolBadge = (rol: string) => {
-    switch (rol) {
-      case 'admin': return 'bg-red-100 text-red-700'
-      case 'gerente': return 'bg-blue-100 text-blue-700'
-      case 'vendedor': return 'bg-green-100 text-green-700'
-      default: return 'bg-gray-100 text-gray-700'
-    }
-  }
-
-  const getRolLabel = (rol: string) => {
-    switch (rol) {
-      case 'admin': return 'Administrador'
-      case 'gerente': return 'Gerente'
-      case 'vendedor': return 'Vendedor'
-      default: return rol
-    }
-  }
-
   if (!puedeGestionar) {
     return (
-      <div className="p-4 pb-24">
-        <div className="text-center py-12">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-medium text-gray-900">Acceso Restringido</h3>
-          <p className="text-gray-500">No tienes permisos para gestionar usuarios</p>
+      <div className="p-4">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+          <p className="text-amber-700">No tienes permisos para gestionar usuarios</p>
         </div>
       </div>
     )
@@ -292,50 +282,42 @@ export default function UsuariosPage() {
       <div className="p-4">
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-20 bg-gray-200 rounded-xl"></div>
-            ))}
-          </div>
+          <div className="h-20 bg-gray-200 rounded-xl"></div>
+          <div className="h-20 bg-gray-200 rounded-xl"></div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="p-4 pb-24">
+    <div className="p-4 pb-24 max-w-2xl mx-auto">
       {/* Modal Éxito con Credenciales */}
       {showExitoModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm animate-bounce-in">
-            <div className="p-6 text-center">
-              <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                </svg>
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full animate-bounce-in">
+            <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 text-center mb-2">¡Usuario Creado!</h2>
+            <div className="bg-gray-50 rounded-xl p-4 space-y-2">
+              <div>
+                <p className="text-xs text-gray-500">Email</p>
+                <p className="font-medium text-gray-900">{credencialesCreadas.email}</p>
               </div>
-              <h2 className="text-xl font-bold text-gray-900 mb-2">¡Usuario Creado!</h2>
-              <p className="text-gray-500 mb-4">Guarda estas credenciales</p>
-              
-              <div className="bg-gray-50 rounded-xl p-4 text-left space-y-2">
-                <div>
-                  <p className="text-xs text-gray-500">Email</p>
-                  <p className="font-mono text-sm font-medium text-gray-900">{credencialesCreadas.email}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Contraseña</p>
-                  <p className="font-mono text-sm font-medium text-gray-900">{credencialesCreadas.password}</p>
-                </div>
+              <div>
+                <p className="text-xs text-gray-500">Contraseña</p>
+                <p className="font-medium text-gray-900">{credencialesCreadas.password}</p>
               </div>
             </div>
-            <div className="p-6 border-t border-gray-100">
-              <button
-                onClick={() => setShowExitoModal(false)}
-                className="w-full py-2.5 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600"
-              >
-                Entendido
-              </button>
-            </div>
+            <p className="text-xs text-center text-gray-500 mt-4">Guarda estas credenciales en un lugar seguro</p>
+            <button
+              onClick={() => setShowExitoModal(false)}
+              className="w-full mt-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600"
+            >
+              Entendido
+            </button>
           </div>
         </div>
       )}
@@ -344,9 +326,12 @@ export default function UsuariosPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Usuarios</h1>
-          <p className="text-gray-500 text-sm">Gestiona los usuarios de tu sucursal</p>
+          <p className="text-gray-500 text-sm">Gestiona el equipo de tu sucursal</p>
         </div>
-        <button onClick={abrirModal} className="px-4 py-2 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600 flex items-center gap-2">
+        <button
+          onClick={abrirModal}
+          className="px-4 py-2 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600 flex items-center gap-2"
+        >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
@@ -354,115 +339,195 @@ export default function UsuariosPage() {
         </button>
       </div>
 
-      {/* Lista */}
+      {/* Lista de Usuarios */}
       <div className="space-y-3">
-        {usuarios.map((usuarioItem) => (
-          <div key={usuarioItem.id} className={`bg-white rounded-xl p-4 shadow-sm border transition-all ${usuarioItem.activo ? 'border-gray-100' : 'border-orange-200 bg-orange-50'}`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium ${usuarioItem.activo ? 'bg-emerald-500' : 'bg-gray-400'}`}>
-                  {usuarioItem.nombre.charAt(0).toUpperCase()}
+        {usuarios.map((u) => (
+          <div key={u.id} className="bg-white rounded-xl border border-gray-100 p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-gray-900 truncate">{u.nombre}</h3>
+                  <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
+                    u.rol === 'gerente' ? 'bg-purple-100 text-purple-700' :
+                    u.rol === 'vendedor' ? 'bg-blue-100 text-blue-700' :
+                    'bg-gray-100 text-gray-700'
+                  }`}>
+                    {u.rol === 'gerente' ? 'Gerente' : 'Vendedor'}
+                  </span>
+                  {!u.activo && (
+                    <span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700 font-medium">
+                      Inactivo
+                    </span>
+                  )}
                 </div>
-                <div>
-                  <h3 className="font-medium text-gray-900">{usuarioItem.nombre}</h3>
-                  <p className="text-sm text-gray-500">{usuarioItem.email}</p>
-                </div>
+                <p className="text-sm text-gray-500 truncate">{u.email}</p>
+                {u.telefono && <p className="text-sm text-gray-500">{u.telefono}</p>}
               </div>
-              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getRolBadge(usuarioItem.rol)}`}>
-                {getRolLabel(usuarioItem.rol)}
-              </span>
             </div>
 
-            {usuarioItem.id !== usuario?.id && (
-              <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100">
-                {usuarioItem.rol === 'vendedor' && (
-                  <button
-                    onClick={() => abrirPermisos(usuarioItem)}
-                    className="flex-1 py-2 text-sm text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100"
-                  >
-                    Permisos
-                  </button>
-                )}
+            <div className="flex gap-2 mt-3">
+              {u.rol === 'vendedor' && (
                 <button
-                  onClick={() => toggleActivo(usuarioItem)}
-                  className={`flex-1 py-2 text-sm rounded-lg ${usuarioItem.activo ? 'text-orange-600 bg-orange-50 hover:bg-orange-100' : 'text-green-600 bg-green-50 hover:bg-green-100'}`}
+                  onClick={() => abrirPermisosModal(u)}
+                  className="flex-1 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 text-sm font-medium"
                 >
-                  {usuarioItem.activo ? 'Desactivar' : 'Activar'}
+                  Permisos
                 </button>
-              </div>
-            )}
+              )}
+              <button
+                onClick={() => toggleActivo(u.id, u.activo)}
+                className={`flex-1 py-2 rounded-lg text-sm font-medium ${
+                  u.activo
+                    ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                    : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                }`}
+              >
+                {u.activo ? 'Desactivar' : 'Activar'}
+              </button>
+            </div>
           </div>
         ))}
       </div>
 
       {usuarios.length === 0 && (
         <div className="text-center py-12">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-medium text-gray-900">No hay usuarios</h3>
-          <p className="text-gray-500">Comienza agregando usuarios</p>
+          <p className="text-gray-500">No hay usuarios en esta sucursal</p>
         </div>
       )}
 
-      {/* Modal Crear Usuario */}
+      {/* Modal Crear Usuario CON PERMISOS */}
       {showModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-lg my-8">
             <div className="p-6 border-b border-gray-100">
               <h2 className="text-xl font-bold text-gray-900">Nuevo Usuario</h2>
+              <p className="text-sm text-gray-500">Completa los datos del nuevo miembro</p>
             </div>
-            <div className="p-6 space-y-4">
+            
+            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
               {error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                   {error}
                 </div>
               )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nombre *</label>
-                <input type="text" value={formData.nombre} onChange={(e) => setFormData({ ...formData, nombre: e.target.value })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Nombre completo" />
+                <input 
+                  type="text" 
+                  value={formData.nombre} 
+                  onChange={(e) => setFormData({ ...formData, nombre: e.target.value })} 
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" 
+                  placeholder="Nombre completo" 
+                />
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Email *</label>
-                <input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="correo@ejemplo.com" />
+                <input 
+                  type="email" 
+                  value={formData.email} 
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })} 
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" 
+                  placeholder="correo@ejemplo.com" 
+                />
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña *</label>
-                <input type="password" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Mínimo 6 caracteres" />
+                <input 
+                  type="password" 
+                  value={formData.password} 
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })} 
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" 
+                  placeholder="Mínimo 6 caracteres" 
+                />
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
-                <input type="tel" value={formData.telefono} onChange={(e) => setFormData({ ...formData, telefono: e.target.value })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" placeholder="Opcional" />
+                <input 
+                  type="tel" 
+                  value={formData.telefono} 
+                  onChange={(e) => setFormData({ ...formData, telefono: e.target.value })} 
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none" 
+                  placeholder="Opcional" 
+                />
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Rol</label>
-                <select value={formData.rol} onChange={(e) => setFormData({ ...formData, rol: e.target.value as any })} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none">
+                <select 
+                  value={formData.rol} 
+                  onChange={(e) => setFormData({ ...formData, rol: e.target.value as any })} 
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+                >
                   <option value="vendedor">Vendedor</option>
-                  <option value="gerente">Gerente</option>
+                  <option value="gerente">Gerente (acceso completo)</option>
                 </select>
               </div>
+
+              {/* NUEVO: Permisos para vendedor */}
+              {formData.rol === 'vendedor' && (
+                <div className="pt-4 border-t border-gray-200">
+                  <h3 className="font-medium text-gray-900 mb-3">Permisos del Vendedor</h3>
+                  <div className="space-y-4">
+                    {Object.entries(PERMISOS_LABELS).map(([modulo, permisos]) => (
+                      <div key={modulo}>
+                        <h4 className="text-sm font-medium text-gray-700 capitalize mb-2">{modulo}</h4>
+                        <div className="space-y-1.5">
+                          {Object.entries(permisos).map(([key, label]) => (
+                            <label key={key} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100">
+                              <span className="text-sm text-gray-700">{label}</span>
+                              <div className="relative">
+                                <input
+                                  type="checkbox"
+                                  checked={permisosCreacion[modulo]?.[key] || false}
+                                  onChange={() => togglePermisoCreacion(modulo, key)}
+                                  className="sr-only"
+                                />
+                                <div className={`w-9 h-5 rounded-full transition-colors ${permisosCreacion[modulo]?.[key] ? 'bg-emerald-500' : 'bg-gray-300'}`}>
+                                  <div className={`w-3.5 h-3.5 bg-white rounded-full shadow-sm transform transition-transform mt-0.75 ${permisosCreacion[modulo]?.[key] ? 'translate-x-4.5' : 'translate-x-0.5'}`}></div>
+                                </div>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
+
             <div className="p-6 border-t border-gray-100 flex gap-3">
-              <button onClick={cerrarModal} className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50">Cancelar</button>
-              <button onClick={handleSubmit} disabled={saving} className="flex-1 px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50">
-                {saving ? 'Creando...' : 'Crear'}
+              <button 
+                onClick={cerrarModal} 
+                className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={handleSubmit} 
+                disabled={saving} 
+                className="flex-1 px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50"
+              >
+                {saving ? 'Creando...' : 'Crear Usuario'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal Permisos */}
+      {/* Modal Permisos (para editar después) */}
       {showPermisosModal && usuarioPermisos && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-md my-8">
             <div className="p-6 border-b border-gray-100">
               <h2 className="text-xl font-bold text-gray-900">Permisos de {usuarioPermisos.nombre}</h2>
               <p className="text-sm text-gray-500">Configura qué puede hacer este vendedor</p>
             </div>
-            <div className="p-6 space-y-6">
+            <div className="p-6 space-y-6 max-h-[60vh] overflow-y-auto">
               {Object.entries(PERMISOS_LABELS).map(([modulo, permisos]) => (
                 <div key={modulo}>
                   <h3 className="font-medium text-gray-900 capitalize mb-3">{modulo}</h3>
@@ -488,8 +553,17 @@ export default function UsuariosPage() {
               ))}
             </div>
             <div className="p-6 border-t border-gray-100 flex gap-3">
-              <button onClick={() => setShowPermisosModal(false)} className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50">Cancelar</button>
-              <button onClick={guardarPermisos} disabled={saving} className="flex-1 px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50">
+              <button 
+                onClick={() => setShowPermisosModal(false)} 
+                className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={guardarPermisos} 
+                disabled={saving} 
+                className="flex-1 px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50"
+              >
                 {saving ? 'Guardando...' : 'Guardar'}
               </button>
             </div>
