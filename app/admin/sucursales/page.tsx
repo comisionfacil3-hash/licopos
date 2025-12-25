@@ -1,3 +1,4 @@
+// Path: app\admin\sucursales\page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -19,6 +20,7 @@ export default function SucursalesPage() {
     nombre: '',
     direccion: '',
     telefono: '',
+    pin_seguridad: '',
     activa: true
   })
   const [saving, setSaving] = useState(false)
@@ -71,6 +73,7 @@ export default function SucursalesPage() {
       nombre: '',
       direccion: '',
       telefono: '',
+      pin_seguridad: '',
       activa: true
     })
     setShowModal(true)
@@ -83,25 +86,40 @@ export default function SucursalesPage() {
       nombre: sucursal.nombre,
       direccion: sucursal.direccion || '',
       telefono: sucursal.telefono || '',
+      pin_seguridad: sucursal.pin_seguridad || '',
       activa: sucursal.activa
     })
     setShowModal(true)
   }
 
   const handleSave = async () => {
+    // Validar PIN si se proporcionó
+    if (formData.pin_seguridad && formData.pin_seguridad.length !== 4) {
+      alert('El PIN debe tener exactamente 4 dígitos')
+      return
+    }
+
+    if (formData.pin_seguridad && !/^\d{4}$/.test(formData.pin_seguridad)) {
+      alert('El PIN solo puede contener números')
+      return
+    }
+
     setSaving(true)
     try {
+      const dataToSave = {
+        empresa_id: formData.empresa_id,
+        nombre: formData.nombre,
+        direccion: formData.direccion,
+        telefono: formData.telefono,
+        pin_seguridad: formData.pin_seguridad || null,
+        activa: formData.activa
+      }
+
       if (editingSucursal) {
         // Actualizar
         const { error } = await supabase
           .from('sucursales')
-          .update({
-            empresa_id: formData.empresa_id,
-            nombre: formData.nombre,
-            direccion: formData.direccion,
-            telefono: formData.telefono,
-            activa: formData.activa
-          })
+          .update(dataToSave)
           .eq('id', editingSucursal.id)
 
         if (error) throw error
@@ -109,13 +127,7 @@ export default function SucursalesPage() {
         // Crear
         const { error } = await supabase
           .from('sucursales')
-          .insert({
-            empresa_id: formData.empresa_id,
-            nombre: formData.nombre,
-            direccion: formData.direccion,
-            telefono: formData.telefono,
-            activa: formData.activa
-          })
+          .insert(dataToSave)
 
         if (error) throw error
       }
@@ -189,6 +201,11 @@ export default function SucursalesPage() {
                   <span className="ml-2 badge badge-info">
                     {sucursal.empresa.nombre}
                   </span>
+                  {sucursal.pin_seguridad && (
+                    <span className="ml-2 badge badge-warning">
+                      🔒 PIN Configurado
+                    </span>
+                  )}
                 </div>
                 <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-600">
                   <div>📞 {sucursal.telefono || 'Sin teléfono'}</div>
@@ -242,8 +259,8 @@ export default function SucursalesPage() {
 
       {/* Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg w-full max-w-md">
             <div className="p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
                 {editingSucursal ? 'Editar Sucursal' : 'Nueva Sucursal'}
@@ -277,6 +294,24 @@ export default function SucursalesPage() {
                     placeholder="Nombre de la sucursal"
                     required
                   />
+                </div>
+
+                <div>
+                  <label className="label">PIN de Seguridad (4 dígitos)</label>
+                  <input
+                    type="text"
+                    className="input"
+                    value={formData.pin_seguridad}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '').slice(0, 4)
+                      setFormData({ ...formData, pin_seguridad: value })
+                    }}
+                    placeholder="1234"
+                    maxLength={4}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Este PIN se usará para autorizar cambios de stock
+                  </p>
                 </div>
 
                 <div>

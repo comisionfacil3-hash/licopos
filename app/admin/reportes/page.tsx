@@ -1,3 +1,4 @@
+// Path: app\admin\reportes\page.tsx
 export default function ReportesPage() {
   return (
     <div className="p-6">

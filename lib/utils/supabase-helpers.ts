@@ -1,3 +1,4 @@
+// Path: lib\utils\supabase-helpers.ts
 import { createClient } from '@/lib/supabase/client'
 import { createClient as createServerClient } from '@/lib/supabase/server'
 

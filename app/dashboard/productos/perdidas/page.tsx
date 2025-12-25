@@ -1,3 +1,4 @@
+// Path: app\dashboard\productos\perdidas\page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'

@@ -1,3 +1,4 @@
+// Path: types\auth.ts
 import { Usuario } from './database'
 
 export interface AuthUser {

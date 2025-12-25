@@ -1,3 +1,4 @@
+// Path: lib\hooks\use-auth.tsx
 'use client'
 
 import React, { useState, useEffect, createContext, useContext, ReactNode } from 'react'

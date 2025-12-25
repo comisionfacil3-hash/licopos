@@ -1,3 +1,4 @@
+// Path: app\debug\page.tsx
 'use client'
 
 import { createClient } from '@/lib/supabase/client'

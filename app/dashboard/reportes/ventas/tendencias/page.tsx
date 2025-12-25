@@ -1,3 +1,4 @@
+// Path: app\dashboard\reportes\ventas\tendencias\page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'

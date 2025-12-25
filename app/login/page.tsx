@@ -1,3 +1,4 @@
+// Path: app\login\page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -13,7 +14,6 @@ export default function LoginPage() {
   const { signIn, user, usuario, loading: authLoading } = useAuth()
   const router = useRouter()
 
-  // Redirigir si ya está logueado
   useEffect(() => {
     if (!authLoading && user && usuario) {
       console.log('🚀 Redirecting user:', {
@@ -22,12 +22,12 @@ export default function LoginPage() {
         sucursal_id: usuario.sucursal_id
       })
 
-      if (usuario.rol === 'admin' && !usuario.sucursal_id) {
+      if (usuario.rol === 'admin' && usuario.sucursal_id === null) {
         console.log('🏢 Redirecting to admin panel')
-        router.push('/admin')
+        router.replace('/admin')
       } else {
         console.log('🏪 Redirecting to dashboard')
-        router.push('/dashboard')
+        router.replace('/dashboard')
       }
     }
   }, [user, usuario, authLoading, router])
@@ -40,7 +40,7 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
     
-    console.log('📝 Login attempt:', email)
+    console.log('🔐 Login attempt:', email)
     
     try {
       const result = await signIn(email, password)
@@ -49,7 +49,6 @@ export default function LoginPage() {
         setError(result.error)
         setLoading(false)
       }
-      // Si es exitoso, el useEffect manejará la redirección
     } catch (error) {
       console.error('❌ Login error:', error)
       setError('Error inesperado. Intente de nuevo.')
@@ -57,17 +56,14 @@ export default function LoginPage() {
     }
   }
 
-  // ⚠️ IMPORTANTE: Solo mostrar loading por 3 segundos máximo
   if (authLoading) {
-    console.log('⏳ Auth loading...')
-    
     return (
       <div className="min-h-screen bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center">
         <div className="bg-white rounded-lg p-8 shadow-xl max-w-md">
           <div className="text-center">
             <div className="spinner mb-4"></div>
             <h2 className="text-lg font-medium text-gray-900">Verificando sesión...</h2>
-            <p className="text-sm text-gray-500 mt-2">Por favor espere un momento</p>
+            <p className="text-sm text-gray-500 mt-2">Por favor espere</p>
           </div>
         </div>
       </div>

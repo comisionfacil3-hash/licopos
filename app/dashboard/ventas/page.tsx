@@ -1,3 +1,4 @@
+// Path: app\dashboard\ventas\page.tsx
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'

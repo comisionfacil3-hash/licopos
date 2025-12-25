@@ -1,3 +1,4 @@
+// Path: app\loading.tsx
 import { Suspense } from 'react'
 
 export default function Loading() {

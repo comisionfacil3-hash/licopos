@@ -1,3 +1,4 @@
+// Path: lib\utils\reportes.ts
 import * as XLSX from 'xlsx'
 
 // Rango de fechas predefinido

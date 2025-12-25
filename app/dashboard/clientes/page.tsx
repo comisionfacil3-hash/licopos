@@ -1,4 +1,5 @@
-﻿'use client'
+// Path: app\dashboard\clientes\page.tsx
+'use client'
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
@@ -143,7 +144,7 @@ export default function ClientesPage() {
   }
 
   const handleDelete = async (cliente: Cliente) => {
-    if (!confirm('¿Está seguro de eliminar este cliente?')) return
+    if (!confirm('Esta seguro de eliminar este cliente?')) return
 
     try {
       const { error } = await supabase

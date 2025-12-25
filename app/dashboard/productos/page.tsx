@@ -1,4 +1,5 @@
-﻿'use client'
+// Path: app\dashboard\productos\page.tsx
+'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
@@ -33,7 +34,7 @@ export default function ProductosPage() {
 
   const fetchCategorias = async () => {
     try {
-      console.log('🔍 Fetching categorias para empresa:', usuario?.empresa_id)
+      console.log('?? Fetching categorias para empresa:', usuario?.empresa_id)
       
       const { data, error } = await supabase
         .from('categorias')
@@ -44,10 +45,10 @@ export default function ProductosPage() {
 
       if (error) throw error
       
-      console.log('✅ Categorias obtenidas:', data)
+      console.log('? Categorias obtenidas:', data)
       setCategorias(data || [])
     } catch (error) {
-      console.error('❌ Error fetching categorias:', error)
+      console.error('? Error fetching categorias:', error)
     }
   }
 
@@ -91,6 +92,8 @@ export default function ProductosPage() {
     if (filters.categoria_id) {
       filtered = filtered.filter(producto => producto.categoria_id === filters.categoria_id)
     }
+    filtered = filtered.sort((a, b) => a.nombre.localeCompare(b.nombre))
+
 
     // Filtro por estado de stock
     if (filters.stock_status) {
@@ -140,14 +143,17 @@ export default function ProductosPage() {
     const stockText = getStockStatusText(stockStatus)
     
     return (
-      <div className={`relative bg-white rounded-xl p-4 shadow-sm border transition-shadow ${
-        producto.activo 
-          ? 'border-gray-200 hover:shadow-md' 
-          : 'border-orange-300 bg-orange-50 opacity-75'
-      }`}>
+      <div 
+        onClick={() => router.push(`/dashboard/productos/${producto.id}`)}
+        className={`relative bg-white rounded-xl p-4 shadow-sm border transition-shadow cursor-pointer ${
+          producto.activo 
+            ? 'border-gray-200 hover:shadow-md hover:border-primary-300' 
+            : 'border-orange-300 bg-orange-50 opacity-75'
+        }`}
+      >
         {/* Badge de inactivo */}
         {!producto.activo && (
-          <div className="absolute top-2 right-2 bg-orange-500 text-white text-xs px-2 py-1 rounded-full">
+          <div className="absolute top-2 right-2 bg-orange-500 text-white text-xs px-2 py-1 rounded-full z-10">
             Inactivo
           </div>
         )}
@@ -176,12 +182,7 @@ export default function ProductosPage() {
             {producto.nombre}
           </h3>
 
-          {/* Código */}
-          {producto.codigo && (
-            <p className="text-xs text-gray-500 mb-2">
-              {producto.codigo}
-            </p>
-          )}
+          
 
           {/* Categoría */}
           {producto.categoria && (
@@ -201,25 +202,18 @@ export default function ProductosPage() {
             </span>
           </div>
 
-          {/* Precio */}
-          <div className="mb-3">
+          {/* Precio y Toggle */}
+          <div className="flex items-center justify-between">
             <p className="text-sm font-bold text-primary-600">
               {formatCurrency(producto.precio_venta)}
             </p>
-          </div>
-
-          {/* Acciones */}
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => router.push(`/dashboard/productos/${producto.id}`)}
-              className="text-primary-600 text-xs font-medium hover:text-primary-700"
-            >
-              Editar
-            </button>
             
             <button
-              onClick={() => toggleProductoStatus(producto)}
-              className={`p-1 rounded ${
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleProductoStatus(producto)
+              }}
+              className={`p-1.5 rounded-lg transition-colors ${
                 producto.activo 
                   ? 'text-orange-600 hover:bg-orange-50' 
                   : 'text-green-600 hover:bg-green-50'
@@ -227,11 +221,11 @@ export default function ProductosPage() {
               title={producto.activo ? 'Desactivar' : 'Activar'}
             >
               {producto.activo ? (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
@@ -280,14 +274,20 @@ export default function ProductosPage() {
             }}
             className="px-3 py-2 text-sm bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
           >
-            📊 Exportar
+            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
+            </svg>
+            Exportar
           </button>
 
           <button
             onClick={() => router.push('/dashboard/productos/importar')}
             className="px-3 py-2 text-sm bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors"
           >
-            📥 Importar
+            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            Importar
           </button>
 
           <button

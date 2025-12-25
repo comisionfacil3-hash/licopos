@@ -1,3 +1,4 @@
+// Path: app\dashboard\gastos\page.tsx
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
@@ -145,6 +146,9 @@ export default function GastosPage() {
   const [cajaAbierta, setCajaAbierta] = useState(false)
   const [cajaId, setCajaId] = useState<string | null>(null)
   const [saldoCaja, setSaldoCaja] = useState<SaldoCaja>({ efectivo: 0, qr: 0 })
+  
+  // 🆕 NUEVO: Estado para pago fuera de caja
+  const [pagoFueraCaja, setPagoFueraCaja] = useState(false)
   
   // Estado para éxito
   const [showExito, setShowExito] = useState(false)
@@ -302,7 +306,7 @@ export default function GastosPage() {
 
   // Guardar gasto
   const guardarGasto = async () => {
-    if (!usuario?.sucursal_id || !usuario?.id || !cajaId) return
+    if (!usuario?.sucursal_id || !usuario?.id) return
 
     if (!categoria) {
       setError('Seleccione una categoría')
@@ -317,10 +321,16 @@ export default function GastosPage() {
       return
     }
 
-    // VALIDACIÓN: Verificar saldo disponible
-    if (montoNum > saldoDisponible) {
-      setError(`Saldo insuficiente. Disponible en ${metodoPago === 'efectivo' ? 'efectivo' : 'QR'}: ${formatCurrency(saldoDisponible)}`)
-      return
+    // 🆕 MODIFICADO: Solo validar saldo si NO es pago fuera de caja
+    if (!pagoFueraCaja) {
+      if (!cajaId) {
+        setError('Debe abrir la caja primero')
+        return
+      }
+      if (montoNum > saldoDisponible) {
+        setError(`Saldo insuficiente. Disponible en ${metodoPago === 'efectivo' ? 'efectivo' : 'QR'}: ${formatCurrency(saldoDisponible)}`)
+        return
+      }
     }
 
     setGuardando(true)
@@ -337,12 +347,13 @@ export default function GastosPage() {
 
       const numeroGasto = (maxGasto?.numero_gasto || 0) + 1
 
+      // 🆕 MODIFICADO: caja_id es NULL si es pago fuera de caja
       const { data: gasto, error: gastoError } = await supabase
         .from('gastos')
         .insert({
           sucursal_id: usuario.sucursal_id,
           usuario_id: usuario.id,
-          caja_id: cajaId,
+          caja_id: pagoFueraCaja ? null : cajaId,
           numero_gasto: numeroGasto,
           categoria,
           descripcion: descripcion.trim(),
@@ -354,22 +365,26 @@ export default function GastosPage() {
 
       if (gastoError) throw gastoError
 
-      const catInfo = getCategoriaInfo(categoria)
-      await supabase.from('movimientos_caja').insert({
-        caja_id: cajaId,
-        tipo: 'egreso',
-        concepto: `Gasto #${numeroGasto} - ${catInfo.nombre}: ${descripcion.trim()}`,
-        referencia_id: gasto.id,
-        referencia_tipo: 'gasto',
-        monto: montoNum,
-        metodo_pago: metodoPago
-      })
+      // 🆕 MODIFICADO: Solo registrar en caja si NO es pago fuera de caja
+      if (!pagoFueraCaja && cajaId) {
+        const catInfo = getCategoriaInfo(categoria)
+        await supabase.from('movimientos_caja').insert({
+          caja_id: cajaId,
+          tipo: 'egreso',
+          concepto: `Gasto #${numeroGasto} - ${catInfo.nombre}: ${descripcion.trim()}`,
+          referencia_id: gasto.id,
+          referencia_tipo: 'gasto',
+          monto: montoNum,
+          metodo_pago: metodoPago
+        })
+      }
 
       setShowNuevoGasto(false)
       setCategoria('')
       setDescripcion('')
       setMonto('')
       setMetodoPago('efectivo')
+      setPagoFueraCaja(false) // Reset
 
       setGastoExitoso(numeroGasto)
       setShowExito(true)
@@ -390,13 +405,10 @@ export default function GastosPage() {
 
   // Abrir modal nuevo gasto
   const abrirNuevoGasto = () => {
-    if (!cajaAbierta) {
-      setError('Debe abrir la caja antes de registrar gastos')
-      return
-    }
     setCategoria('')
     setDescripcion('')
     setMonto('')
+    setPagoFueraCaja(false) // Reset
     setMetodoPago('efectivo')
     setError('')
     setShowNuevoGasto(true)
@@ -686,20 +698,45 @@ export default function GastosPage() {
                 </div>
               )}
 
-              {/* Saldo disponible en modal */}
-              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm">
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-600">Saldo disponible:</span>
-                  <div className="text-right">
-                    <p className={metodoPago === 'efectivo' ? 'font-bold text-emerald-600' : 'text-gray-400'}>
-                      Efectivo: {formatCurrency(saldoCaja.efectivo)}
-                    </p>
-                    <p className={metodoPago === 'qr' ? 'font-bold text-blue-600' : 'text-gray-400'}>
-                      QR: {formatCurrency(saldoCaja.qr)}
+              {/* 🆕 CHECKBOX PAGO FUERA DE CAJA */}
+              <div className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 border border-purple-200 rounded-xl">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={pagoFueraCaja}
+                    onChange={(e) => setPagoFueraCaja(e.target.checked)}
+                    className="mt-1 w-5 h-5 text-purple-600 rounded border-gray-300 focus:ring-purple-500"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                      </svg>
+                      <span className="font-semibold text-purple-900">Pago fuera de caja</span>
+                    </div>
+                    <p className="text-xs text-purple-700 mt-1">
+                      Marca esta opción si pagas con cuenta bancaria o dinero fuera de la caja física
                     </p>
                   </div>
-                </div>
+                </label>
               </div>
+
+              {/* Saldo disponible en modal - SOLO SI NO ES FUERA DE CAJA */}
+              {!pagoFueraCaja && cajaAbierta && (
+                <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600">Saldo disponible:</span>
+                    <div className="text-right">
+                      <p className={metodoPago === 'efectivo' ? 'font-bold text-emerald-600' : 'text-gray-400'}>
+                        Efectivo: {formatCurrency(saldoCaja.efectivo)}
+                      </p>
+                      <p className={metodoPago === 'qr' ? 'font-bold text-blue-600' : 'text-gray-400'}>
+                        QR: {formatCurrency(saldoCaja.qr)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Categoría */}
               <div>

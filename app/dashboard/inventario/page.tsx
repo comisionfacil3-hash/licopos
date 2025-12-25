@@ -1,3 +1,4 @@
+// Path: app\dashboard\inventario\page.tsx
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
@@ -300,21 +301,39 @@ export default function InventarioPage() {
   }
 
   const actualizarConteo = async (detalleId: string, stockContado: number | null) => {
+    // 1. Actualizar estado local INMEDIATAMENTE (optimistic update)
+    setDetalles(prev => prev.map(d => {
+      if (d.id !== detalleId) return d
+      
+      const nuevoStockContado = stockContado
+      const diferencia = nuevoStockContado !== null 
+        ? nuevoStockContado - d.stock_sistema 
+        : 0
+      const costoDiferencia = diferencia * d.costo_unitario
+      
+      return {
+        ...d,
+        stock_contado: nuevoStockContado,
+        contado: nuevoStockContado !== null,
+        diferencia,
+        costo_diferencia: costoDiferencia
+      }
+    }))
+
+    // 2. Actualizar en base de datos en segundo plano
     if (stockContado === null) {
-      // Marcar como no contado
-      await supabase
+      supabase
         .from('inventario_detalles')
         .update({ stock_contado: null, contado: false })
         .eq('id', detalleId)
+        .then()
     } else {
-      // Marcar como contado
-      await supabase
+      supabase
         .from('inventario_detalles')
         .update({ stock_contado: stockContado, contado: true })
         .eq('id', detalleId)
+        .then()
     }
-
-    await loadData()
   }
 
   const aplicarAjustes = async () => {

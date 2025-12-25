@@ -1,3 +1,4 @@
+// Path: lib\utils\excel-productos.ts
 import * as XLSX from 'xlsx'
 import { Producto, ProductoWithCategoria, Categoria } from '@/types/database'
 import { formatCurrency } from '@/lib/utils/format'

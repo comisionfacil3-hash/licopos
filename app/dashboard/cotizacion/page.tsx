@@ -1,3 +1,4 @@
+// Path: app\dashboard\cotizacion\page.tsx
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'

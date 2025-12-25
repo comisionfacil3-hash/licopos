@@ -1,3 +1,4 @@
+// Path: app\sistema-pausado\page.tsx
 'use client'
 
 import { useRouter } from 'next/navigation'

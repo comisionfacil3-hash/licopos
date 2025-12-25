@@ -1,3 +1,4 @@
+// Path: app\dashboard\productos\importar\page.tsx
 'use client'
 
 import { useState, useRef } from 'react'

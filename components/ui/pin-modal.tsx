@@ -1,3 +1,4 @@
+// Path: components\ui\pin-modal.tsx
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
@@ -16,10 +17,10 @@ export default function PinModal({
   onClose, 
   onSuccess, 
   sucursalId,
-  titulo = 'Verificación Requerida',
+  titulo = 'Verificacion Requerida',
   mensaje = 'Ingresa el PIN de seguridad para continuar'
 }: PinModalProps) {
-  const [pin, setPin] = useState(['', '', '', '', '', ''])
+  const [pin, setPin] = useState(['', '', '', ''])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
@@ -27,7 +28,7 @@ export default function PinModal({
   // Enfocar primer input al abrir
   useEffect(() => {
     if (isOpen) {
-      setPin(['', '', '', '', '', ''])
+      setPin(['', '', '', ''])
       setError('')
       setTimeout(() => {
         inputRefs.current[0]?.focus()
@@ -36,7 +37,7 @@ export default function PinModal({
   }, [isOpen])
 
   const handleChange = (index: number, value: string) => {
-    // Solo permitir números
+    // Solo permitir numeros
     if (value && !/^\d$/.test(value)) return
 
     const newPin = [...pin]
@@ -45,14 +46,8 @@ export default function PinModal({
     setError('')
 
     // Mover al siguiente input
-    if (value && index < 5) {
+    if (value && index < 3) {
       inputRefs.current[index + 1]?.focus()
-    }
-
-    // Verificar si el PIN está completo (4-6 dígitos)
-    const pinCompleto = newPin.join('')
-    if (pinCompleto.length >= 4) {
-      // Auto-verificar cuando tenga 4+ dígitos y el usuario deje de escribir
     }
   }
 
@@ -67,22 +62,22 @@ export default function PinModal({
 
   const handlePaste = (e: React.ClipboardEvent) => {
     e.preventDefault()
-    const pastedData = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6)
+    const pastedData = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4)
     if (pastedData) {
-      const newPin = [...pin]
+      const newPin = ['', '', '', '']
       for (let i = 0; i < pastedData.length; i++) {
         newPin[i] = pastedData[i]
       }
       setPin(newPin)
-      inputRefs.current[Math.min(pastedData.length, 5)]?.focus()
+      inputRefs.current[Math.min(pastedData.length, 3)]?.focus()
     }
   }
 
   const handleVerify = async () => {
     const pinIngresado = pin.join('')
     
-    if (pinIngresado.length < 4) {
-      setError('El PIN debe tener al menos 4 dígitos')
+    if (pinIngresado.length !== 4) {
+      setError('El PIN debe tener 4 digitos')
       return
     }
 
@@ -103,7 +98,7 @@ export default function PinModal({
       if (dbError) throw dbError
 
       if (!data.pin_seguridad) {
-        setError('No hay PIN configurado. Configúralo en Ajustes.')
+        setError('No hay PIN configurado. Configuralo en Ajustes.')
         return
       }
 
@@ -112,7 +107,7 @@ export default function PinModal({
         onClose()
       } else {
         setError('PIN incorrecto')
-        setPin(['', '', '', '', '', ''])
+        setPin(['', '', '', ''])
         inputRefs.current[0]?.focus()
       }
     } catch (error) {

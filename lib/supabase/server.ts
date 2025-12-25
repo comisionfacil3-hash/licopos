@@ -1,3 +1,4 @@
+// Path: lib\supabase\server.ts
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 

@@ -1,3 +1,4 @@
+// Path: constants\permissions.ts
 // Permisos por defecto para cada rol
 export const DEFAULT_PERMISSIONS = {
   admin: {

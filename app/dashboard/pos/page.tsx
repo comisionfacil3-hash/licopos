@@ -1,4 +1,5 @@
-﻿'use client'
+// Path: app\dashboard\pos\page.tsx
+'use client'
 
 import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
@@ -11,6 +12,8 @@ interface ItemCarrito {
   producto: Producto
   cantidad: number
   precio_unitario: number
+  descuento_monto: number
+  precio_final: number
   subtotal: number
 }
 
@@ -39,9 +42,16 @@ export default function POSPage() {
   const [editandoPrecio, setEditandoPrecio] = useState<string | null>(null)
   const [nuevoPrecio, setNuevoPrecio] = useState('')
   
+  // Estado para edición de descuento
+  const [editandoDescuento, setEditandoDescuento] = useState<string | null>(null)
+  const [nuevoDescuento, setNuevoDescuento] = useState('')
+  
   // Estado para mensaje de éxito
   const [showExito, setShowExito] = useState(false)
   const [ventaExitosa, setVentaExitosa] = useState<number | null>(null)
+  
+  // Estado para mostrar carrito en pantalla completa
+  const [showCarrito, setShowCarrito] = useState(false)
 
   const router = useRouter()
   const { usuario } = useAuth()
@@ -145,7 +155,12 @@ export default function POSPage() {
             ? {
                 ...item,
                 cantidad: item.cantidad + 1,
-                subtotal: (item.cantidad + 1) * item.precio_unitario
+                precio_final: item.descuento_monto > 0 
+                  ? item.precio_unitario - (item.descuento_monto / (item.cantidad + 1))
+                  : item.precio_unitario,
+                subtotal: (item.cantidad + 1) * (item.descuento_monto > 0 
+                  ? item.precio_unitario - (item.descuento_monto / (item.cantidad + 1))
+                  : item.precio_unitario)
               }
             : item
         )
@@ -155,6 +170,8 @@ export default function POSPage() {
         producto,
         cantidad: 1,
         precio_unitario: producto.precio_venta,
+        descuento_monto: 0,
+        precio_final: producto.precio_venta,
         subtotal: producto.precio_venta
       }]
     })
@@ -172,10 +189,15 @@ export default function POSPage() {
         if (item.producto.id !== productoId) return item
         
         const cantidad = Math.min(nuevaCantidad, item.producto.stock_actual)
+        const precioFinal = item.descuento_monto > 0 
+          ? item.precio_unitario - (item.descuento_monto / cantidad)
+          : item.precio_unitario
+        
         return {
           ...item,
           cantidad,
-          subtotal: cantidad * item.precio_unitario
+          precio_final: precioFinal,
+          subtotal: cantidad * precioFinal
         }
       })
     )
@@ -205,6 +227,31 @@ export default function POSPage() {
     setNuevoPrecio('')
   }
 
+  // Aplicar descuento a un item
+  const aplicarDescuento = (productoId: string) => {
+    const descuento = parseFloat(nuevoDescuento)
+    if (isNaN(descuento) || descuento < 0) return
+
+    setCarrito(prev =>
+      prev.map(item => {
+        if (item.producto.id !== productoId) return item
+        
+        const precioFinal = item.precio_unitario - (descuento / item.cantidad)
+        if (precioFinal < 0) return item
+        
+        return {
+          ...item,
+          descuento_monto: descuento,
+          precio_final: precioFinal,
+          subtotal: item.cantidad * precioFinal
+        }
+      })
+    )
+
+    setEditandoDescuento(null)
+    setNuevoDescuento('')
+  }
+
   // Eliminar del carrito
   const eliminarDelCarrito = (productoId: string) => {
     setCarrito(prev => prev.filter(item => item.producto.id !== productoId))
@@ -213,6 +260,13 @@ export default function POSPage() {
   // Limpiar carrito
   const limpiarCarrito = () => {
     setCarrito([])
+    setShowCarrito(false)
+  }
+
+  // Abrir carrito
+  const abrirCarrito = () => {
+    if (carrito.length === 0) return
+    setShowCarrito(true)
   }
 
   // Abrir modal de cobro
@@ -311,6 +365,8 @@ export default function POSPage() {
         producto_id: item.producto.id,
         cantidad: item.cantidad,
         precio_unitario: item.precio_unitario,
+        descuento_monto: item.descuento_monto,
+        precio_final: item.precio_final,
         precio_original: item.producto.precio_venta,
         costo_unitario: item.producto.precio_compra,
         subtotal: item.subtotal
@@ -429,7 +485,7 @@ export default function POSPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">¡Venta Exitosa!</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">!Venta Exitosa!</h2>
             <p className="text-emerald-600 text-lg font-medium">Venta #{ventaExitosa}</p>
             <p className="text-gray-500 mt-2">registrada correctamente</p>
           </div>
@@ -525,47 +581,94 @@ export default function POSPage() {
         </div>
       </div>
 
-      {/* Carrito fijo abajo */}
+      {/* Botón flotante del carrito */}
       {carrito.length > 0 && (
-        <div className="bg-white border-t border-gray-200 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-gray-600">
-              {carrito.length} items | {carrito.reduce((sum, i) => sum + i.cantidad, 0)} unidades
-            </span>
+        <button
+          onClick={abrirCarrito}
+          className="fixed bottom-6 right-6 bg-emerald-500 text-white rounded-2xl shadow-2xl hover:bg-emerald-600 transition-all hover:scale-105 z-40"
+        >
+          <div className="px-6 py-4 flex items-center gap-3">
+            <div className="relative">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                {carrito.length}
+              </span>
+            </div>
+            <div className="text-left">
+              <div className="text-xs opacity-90">
+                {carrito.reduce((sum, i) => sum + i.cantidad, 0)} unidades
+              </div>
+              <div className="text-lg font-bold">
+                {formatCurrency(totalCarrito)}
+              </div>
+            </div>
+          </div>
+        </button>
+      )}
+
+
+      {/* Modal de carrito pantalla completa */}
+      {showCarrito && (
+        <div className="fixed inset-0 bg-white z-50 flex flex-col">
+          {/* Header del carrito */}
+          <div className="bg-emerald-500 text-white p-4 flex items-center justify-between">
+            <button
+              onClick={() => setShowCarrito(false)}
+              className="p-2 hover:bg-emerald-600 rounded-lg"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <h2 className="text-xl font-bold">Carrito</h2>
             <button
               onClick={limpiarCarrito}
-              className="text-red-500 text-sm"
+              className="text-sm px-3 py-1 bg-emerald-600 hover:bg-emerald-700 rounded-lg"
             >
               Limpiar
             </button>
           </div>
-          
-          <div className="max-h-40 overflow-y-auto mb-3 space-y-2">
+
+          {/* Resumen superior */}
+          <div className="bg-gray-50 p-4 border-b border-gray-200">
+            <div className="flex items-center justify-between text-sm text-gray-600">
+              <span>{carrito.length} productos diferentes</span>
+              <span>{carrito.reduce((sum, i) => sum + i.cantidad, 0)} unidades totales</span>
+            </div>
+          </div>
+
+          {/* Lista de productos en el carrito */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {carrito.map(item => (
-              <div key={item.producto.id} className="flex items-center justify-between bg-gray-50 rounded-lg p-2">
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  {/* Mini imagen */}
-                  <div className="w-10 h-10 bg-gray-200 rounded flex-shrink-0 overflow-hidden">
+              <div key={item.producto.id} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+                <div className="flex gap-3">
+                  {/* Imagen */}
+                  <div className="w-20 h-20 bg-gray-100 rounded-lg flex-shrink-0 overflow-hidden">
                     {item.producto.imagen_url ? (
                       <img src={item.producto.imagen_url} alt="" className="w-full h-full object-cover" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
-                        <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                         </svg>
                       </div>
                     )}
                   </div>
+
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{item.producto.nombre}</p>
+                    <h3 className="font-medium text-gray-900 mb-1">{item.producto.nombre}</h3>
+                    
                     {/* Precio editable */}
                     {editandoPrecio === item.producto.id ? (
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-sm text-gray-500">Precio:</span>
                         <input
                           type="number"
                           value={nuevoPrecio}
                           onChange={e => setNuevoPrecio(e.target.value)}
-                          className="w-20 px-2 py-1 text-xs border rounded"
+                          className="w-24 px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
                           placeholder="Precio"
                           autoFocus
                           onKeyDown={e => {
@@ -575,61 +678,137 @@ export default function POSPage() {
                         />
                         <button
                           onClick={() => actualizarPrecio(item.producto.id)}
-                          className="text-emerald-600 text-xs"
+                          className="px-4 py-1.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-medium"
                         >
-                          ✓
+                          ✓ OK
                         </button>
                       </div>
                     ) : (
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation()
+                        onClick={() => {
                           setEditandoPrecio(item.producto.id)
                           setNuevoPrecio(item.precio_unitario.toString())
                         }}
-                        className="text-xs text-gray-500 hover:text-emerald-600"
+                        className="text-sm text-gray-600 hover:text-emerald-600 mb-2 flex items-center gap-1"
                       >
-                        {formatCurrency(item.precio_unitario)} c/u
+                        <span className="font-medium">{formatCurrency(item.precio_unitario)}</span>
+                        <span>c/u</span>
                         {item.precio_unitario !== item.producto.precio_venta && (
-                          <span className="ml-1 text-amber-500">(editado)</span>
+                          <span className="text-amber-500">(editado)</span>
                         )}
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
                       </button>
                     )}
+
+                    {/* Descuento editable */}
+                    {editandoDescuento === item.producto.id ? (
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-sm text-gray-500">Descuento:</span>
+                        <input
+                          type="number"
+                          value={nuevoDescuento}
+                          onChange={e => setNuevoDescuento(e.target.value)}
+                          className="w-24 px-3 py-1.5 text-sm border border-gray-300 rounded-lg"
+                          placeholder="0"
+                          autoFocus
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') aplicarDescuento(item.producto.id)
+                            if (e.key === 'Escape') { setEditandoDescuento(null); setNuevoDescuento('') }
+                          }}
+                        />
+                        <button
+                          onClick={() => aplicarDescuento(item.producto.id)}
+                          className="px-4 py-1.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-medium"
+                        >
+                          ✓ OK
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        {item.descuento_monto > 0 ? (
+                          <button
+                            onClick={() => {
+                              setEditandoDescuento(item.producto.id)
+                              setNuevoDescuento(item.descuento_monto.toString())
+                            }}
+                            className="text-sm text-red-600 hover:text-red-700 mb-2 flex items-center gap-1"
+                          >
+                            <span>Descuento: -{formatCurrency(item.descuento_monto)}</span>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setEditandoDescuento(item.producto.id)
+                              setNuevoDescuento('0')
+                            }}
+                            className="text-sm text-blue-600 hover:text-blue-700 mb-2"
+                          >
+                            + Agregar descuento
+                          </button>
+                        )}
+                      </>
+                    )}
+
+                    {/* Controles de cantidad */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => actualizarCantidad(item.producto.id, item.cantidad - 1)}
+                          className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center font-bold hover:bg-gray-300"
+                        >
+                          -
+                        </button>
+                        <span className="text-lg font-bold w-12 text-center">{item.cantidad}</span>
+                        <button
+                          onClick={() => actualizarCantidad(item.producto.id, item.cantidad + 1)}
+                          className="w-10 h-10 bg-emerald-500 text-white rounded-full flex items-center justify-center font-bold hover:bg-emerald-600"
+                        >
+                          +
+                        </button>
+                      </div>
+                      
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <div className="text-sm text-gray-500">Subtotal</div>
+                          <div className="text-lg font-bold text-emerald-600">{formatCurrency(item.subtotal)}</div>
+                        </div>
+                        <button
+                          onClick={() => eliminarDelCarrito(item.producto.id)}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
+                        >
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => actualizarCantidad(item.producto.id, item.cantidad - 1)}
-                    className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center font-bold"
-                  >
-                    -
-                  </button>
-                  <span className="w-8 text-center font-medium">{item.cantidad}</span>
-                  <button
-                    onClick={() => actualizarCantidad(item.producto.id, item.cantidad + 1)}
-                    className="w-8 h-8 bg-emerald-500 text-white rounded-full flex items-center justify-center font-bold"
-                  >
-                    +
-                  </button>
-                  <button
-                    onClick={() => eliminarDelCarrito(item.producto.id)}
-                    className="ml-2 text-red-500"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
                 </div>
               </div>
             ))}
           </div>
 
-          <button
-            onClick={abrirCobrar}
-            className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold text-lg hover:bg-emerald-600"
-          >
-            Cobrar {formatCurrency(totalCarrito)}
-          </button>
+          {/* Footer con total y botón cobrar */}
+          <div className="bg-white border-t border-gray-200 p-4 space-y-3">
+            <div className="flex items-center justify-between text-2xl font-bold">
+              <span className="text-gray-700">TOTAL:</span>
+              <span className="text-emerald-600">{formatCurrency(totalCarrito)}</span>
+            </div>
+            <button
+              onClick={abrirCobrar}
+              className="w-full py-4 bg-emerald-500 text-white rounded-xl font-bold text-xl hover:bg-emerald-600 flex items-center justify-center gap-2"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              COBRAR
+            </button>
+          </div>
         </div>
       )}
 
@@ -662,10 +841,26 @@ export default function POSPage() {
                           : 'bg-gray-100 text-gray-600'
                       }`}
                     >
-                      {metodo === 'efectivo' && '💵'}
-                      {metodo === 'qr' && '📱'}
-                      {metodo === 'credito' && '📝'}
-                      {metodo === 'mixto' && '🔄'}
+                      {metodo === 'efectivo' && (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                      )}
+                      {metodo === 'qr' && (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                        </svg>
+                      )}
+                      {metodo === 'credito' && (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                        </svg>
+                      )}
+                      {metodo === 'mixto' && (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                        </svg>
+                      )}
                       <span className="capitalize">{metodo === 'qr' ? 'QR' : metodo}</span>
                     </button>
                   ))}
@@ -716,7 +911,7 @@ export default function POSPage() {
               {metodoPago === 'mixto' && (
                 <>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">💵 Efectivo</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">?? Efectivo</label>
                     <input
                       type="number"
                       value={montoEfectivo}
@@ -726,7 +921,7 @@ export default function POSPage() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">📱 QR</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">?? QR</label>
                     <input
                       type="number"
                       value={montoQR}

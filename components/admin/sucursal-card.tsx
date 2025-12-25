@@ -1,3 +1,4 @@
+// Path: components\admin\sucursal-card.tsx
 'use client'
 
 import { useState } from 'react'

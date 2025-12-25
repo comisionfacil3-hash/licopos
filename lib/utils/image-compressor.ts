@@ -1,3 +1,4 @@
+// Path: lib\utils\image-compressor.ts
 // lib/utils/image-compressor.ts
 
 interface CompressionOptions {

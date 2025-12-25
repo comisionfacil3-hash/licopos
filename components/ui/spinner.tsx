@@ -1,3 +1,4 @@
+// Path: components\ui\spinner.tsx
 import { cn } from '@/lib/utils/cn'
 
 interface SpinnerProps {

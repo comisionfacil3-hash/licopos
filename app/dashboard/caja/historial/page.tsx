@@ -1,3 +1,4 @@
+// Path: app\dashboard\caja\historial\page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -205,6 +206,23 @@ export default function HistorialCajasPage() {
   }
 
   // Exportar historial a Excel
+  // Calcular diferencias entre esperado y contado
+  const calcularDiferencias = (caja: CajaHistorial) => {
+    if (caja.monto_final === null && caja.monto_final_qr === null) {
+      return { efectivo: 0, qr: 0, hayDiferencia: false }
+    }
+
+    const esperadoEfectivo = caja.monto_inicial + caja.total_ventas_efectivo - caja.total_gastos_efectivo - caja.total_retiros
+    const esperadoQR = caja.monto_inicial_qr + caja.total_ventas_qr - caja.total_gastos_qr
+    
+    const diferenciaEfectivo = caja.monto_final !== null ? (caja.monto_final - esperadoEfectivo) : 0
+    const diferenciaQR = caja.monto_final_qr !== null ? (caja.monto_final_qr - esperadoQR) : 0
+    
+    const hayDiferencia = Math.abs(diferenciaEfectivo) > 0.01 || Math.abs(diferenciaQR) > 0.01
+    
+    return { efectivo: diferenciaEfectivo, qr: diferenciaQR, hayDiferencia }
+  }
+
   const exportarExcel = () => {
     if (cajas.length === 0) return
     
@@ -473,9 +491,28 @@ export default function HistorialCajasPage() {
                 </div>
               </div>
 
-              <div className="mt-2 flex justify-between items-center text-xs text-gray-400">
-                <span>{caja.movimientos.length} movimientos</span>
-                <span>Tap para ver detalle →</span>
+              <div className="mt-2 flex justify-between items-center text-xs">
+                <span className="text-gray-400">{caja.movimientos.length} movimientos</span>
+                {(() => {
+                  const diff = calcularDiferencias(caja)
+                  if (!diff.hayDiferencia) {
+                    return <span className="text-gray-400">Tap para ver detalle →</span>
+                  }
+                  
+                  const totalDiferencia = diff.efectivo + diff.qr
+                  const faltaDinero = totalDiferencia < 0
+                  
+                  return (
+                    <span className={`px-2 py-1 rounded-md text-xs font-medium ${
+                      faltaDinero 
+                        ? 'bg-red-100 text-red-700' 
+                        : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {faltaDinero ? '⚠ ' : '⚡ '}
+                      {formatCurrency(Math.abs(totalDiferencia))}
+                    </span>
+                  )
+                })()}
               </div>
             </div>
           ))}
@@ -605,6 +642,65 @@ export default function HistorialCajasPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Diferencias (sutil) */}
+              {(() => {
+                const diff = calcularDiferencias(cajaSeleccionada)
+                if (!diff.hayDiferencia) return null
+                
+                const totalDiferencia = diff.efectivo + diff.qr
+                const faltaDinero = totalDiferencia < 0
+                
+                return (
+                  <div className={`p-3 rounded-lg border ${
+                    faltaDinero 
+                      ? 'bg-red-50/50 border-red-200' 
+                      : 'bg-amber-50/50 border-amber-200'
+                  }`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-700">Diferencias al cierre</span>
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        faltaDinero 
+                          ? 'bg-red-100 text-red-700' 
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {faltaDinero ? 'Faltante' : 'Sobrante'}
+                      </span>
+                    </div>
+                    
+                    <div className="space-y-1.5 text-sm">
+                      {Math.abs(diff.efectivo) > 0.01 && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600">💵 Efectivo:</span>
+                          <span className={`font-semibold ${
+                            diff.efectivo < 0 ? 'text-red-600' : 'text-amber-600'
+                          }`}>
+                            {diff.efectivo > 0 ? '+' : ''}{formatCurrency(diff.efectivo)}
+                          </span>
+                        </div>
+                      )}
+                      {Math.abs(diff.qr) > 0.01 && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-600">📱 QR:</span>
+                          <span className={`font-semibold ${
+                            diff.qr < 0 ? 'text-red-600' : 'text-amber-600'
+                          }`}>
+                            {diff.qr > 0 ? '+' : ''}{formatCurrency(diff.qr)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between pt-1.5 border-t border-gray-200">
+                        <span className="font-medium text-gray-900">Total:</span>
+                        <span className={`font-bold ${
+                          totalDiferencia < 0 ? 'text-red-600' : 'text-amber-600'
+                        }`}>
+                          {totalDiferencia > 0 ? '+' : ''}{formatCurrency(totalDiferencia)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* Movimientos */}
               <div>

@@ -1,4 +1,5 @@
-// Tipos básicos de la base de datos
+// Path: types\database.ts
+// Tipos basicos de la base de datos
 export interface Empresa {
   id: string
   nombre: string
@@ -19,6 +20,7 @@ export interface Sucursal {
   direccion?: string
   telefono?: string
   logo_url?: string
+  pin_seguridad?: string
   activa: boolean
   created_at: string
   updated_at: string
@@ -137,8 +139,8 @@ export interface ResumenCaja {
   total_esperado: number
 }
 export interface ItemCarrito {
-  id?: string  // ← Agrega el ?
-  producto_id?: string  // ← Agrega el ?
+  id?: string
+  producto_id?: string
   producto: Producto
   cantidad: number
   precio_unitario: number
@@ -156,21 +158,8 @@ export type ApiResponse<T> = {
 }
 
 // =====================================================
-// NUEVOS TIPOS PARA MÓDULO DE PRODUCTOS
+// NUEVOS TIPOS PARA MODULO DE PRODUCTOS
 // =====================================================
-
-export interface Categoria {
-  id: string
-  empresa_id: string
-  nombre: string
-  descripcion?: string
-  color: string
-  icono: string
-  orden: number
-  activa: boolean
-  created_at: string
-  updated_at: string
-}
 
 export interface Producto {
   id: string

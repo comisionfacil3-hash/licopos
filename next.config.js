@@ -1,3 +1,4 @@
+// Path: next.config.js
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Corregido: serverExternalPackages en lugar de serverComponentsExternalPackages

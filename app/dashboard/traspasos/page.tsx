@@ -1,3 +1,4 @@
+// Path: app\dashboard\traspasos\page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -58,6 +59,7 @@ export default function TraspasosPage() {
   const [mensajeExito, setMensajeExito] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState('')
+  const [detallesExpandidos, setDetallesExpandidos] = useState<Record<string, boolean>>({})
 
   // Formulario
   const [sucursalDestino, setSucursalDestino] = useState('')
@@ -224,21 +226,8 @@ export default function TraspasosPage() {
 
       if (traspError) throw traspError
 
-      // Crear detalles y actualizar stock origen
+      // Crear detalles (el trigger descontará automáticamente el stock)
       for (const item of items) {
-        // Descontar stock de origen
-        const { data: productoOrigen } = await supabase
-          .from('productos')
-          .select('stock_actual')
-          .eq('id', item.producto_id)
-          .single()
-
-        await supabase
-          .from('productos')
-          .update({ stock_actual: (productoOrigen?.stock_actual || 0) - item.cantidad })
-          .eq('id', item.producto_id)
-
-        // Insertar detalle
         await supabase.from('traspaso_detalles').insert({
           traspaso_id: traspaso.id,
           producto_origen_id: item.producto_id,
@@ -261,6 +250,13 @@ export default function TraspasosPage() {
     } finally {
       setGuardando(false)
     }
+  }
+
+  const toggleDetalles = (traspasoId: string) => {
+    setDetallesExpandidos(prev => ({
+      ...prev,
+      [traspasoId]: !prev[traspasoId]
+    }))
   }
 
   const abrirModalAceptar = (traspaso: Traspaso) => {
@@ -485,10 +481,26 @@ export default function TraspasosPage() {
             </div>
             <div className="p-6 space-y-4">
               <div className="bg-emerald-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-1">
-                  {traspasoAceptar.detalles?.length || 0} productos en este traspaso
+                <p className="text-sm font-semibold text-gray-900 mb-2">
+                  📦 {traspasoAceptar.detalles?.length || 0} productos en este traspaso
                 </p>
-                <p className="text-xs text-gray-500">Revisa los detalles antes de aceptar</p>
+                {traspasoAceptar.detalles && traspasoAceptar.detalles.length > 0 && (
+                  <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
+                    {traspasoAceptar.detalles.map((detalle: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between bg-white rounded-lg p-2 text-sm">
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">{detalle.nombre_producto}</p>
+                          {detalle.costo_unitario && (
+                            <p className="text-xs text-gray-500">
+                              {formatCurrency(detalle.costo_unitario)} c/u
+                            </p>
+                          )}
+                        </div>
+                        <span className="font-semibold text-emerald-700">×{detalle.cantidad}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Notas (opcional)</label>
@@ -595,11 +607,49 @@ export default function TraspasosPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-                <span className="text-sm text-gray-500">
-                  {traspaso.detalles?.length || 0} productos
-                </span>
-                <span className="text-sm text-gray-500">{formatDateTime(traspaso.created_at)}</span>
+              <div className="mt-3 pt-3 border-t border-gray-100">
+                <button
+                  onClick={() => toggleDetalles(traspaso.id)}
+                  className="w-full flex items-center justify-between text-sm text-gray-600 hover:text-gray-900"
+                >
+                  <span>
+                    {traspaso.detalles?.length || 0} productos
+                  </span>
+                  <svg 
+                    className={`w-5 h-5 transition-transform ${detallesExpandidos[traspaso.id] ? 'rotate-180' : ''}`} 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {/* Lista de productos expandida */}
+                {detallesExpandidos[traspaso.id] && traspaso.detalles && traspaso.detalles.length > 0 && (
+                  <div className="mt-3 space-y-2 bg-gray-50 rounded-lg p-3">
+                    {traspaso.detalles.map((detalle: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between text-sm">
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">{detalle.nombre_producto}</p>
+                          {detalle.costo_unitario && (
+                            <p className="text-xs text-gray-500">
+                              {formatCurrency(detalle.costo_unitario)} c/u
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <span className="font-semibold text-gray-900">×{detalle.cantidad}</span>
+                          {detalle.costo_unitario && (
+                            <p className="text-xs text-gray-600">
+                              {formatCurrency(detalle.cantidad * detalle.costo_unitario)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Botones de acción */}

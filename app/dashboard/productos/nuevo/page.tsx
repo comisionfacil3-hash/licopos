@@ -1,3 +1,4 @@
+// Path: app\dashboard\productos\nuevo\page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'

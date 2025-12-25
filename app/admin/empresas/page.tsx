@@ -1,3 +1,4 @@
+// Path: app\admin\empresas\page.tsx
 'use client'
 
 import { useState, useEffect } from 'react'

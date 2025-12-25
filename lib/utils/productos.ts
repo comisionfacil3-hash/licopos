@@ -1,3 +1,4 @@
+// Path: lib\utils\productos.ts
 // lib/utils/productos.ts
 // LICOPOS v2.1 - Utilidades para productos
 // COMPLETO con todas las funciones requeridas

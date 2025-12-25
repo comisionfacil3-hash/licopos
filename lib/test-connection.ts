@@ -1,3 +1,4 @@
+// Path: lib\test-connection.ts
 import { createClient } from '@/lib/supabase/client'
 
 export async function testSupabaseConnection() {

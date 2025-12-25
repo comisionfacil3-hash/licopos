@@ -1,3 +1,4 @@
+// Path: lib\utils\format.ts
 /**
  * Formatear cantidad de dinero en bolivianos
  * Ejemplo: formatCurrency(1234.56) → "Bs. 1,234.56"
