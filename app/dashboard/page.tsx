@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/hooks/use-auth'
 import { formatCurrency } from '@/lib/utils/format'
 import { formatDateTime, formatTime } from '@/lib/utils/timezone'
 import Link from 'next/link'
+import InstallAppCard from '@/components/install-app-card'
 
 interface DashboardStats {
   ventasHoy: number
@@ -309,6 +310,11 @@ export default function DashboardPage() {
           ))}
         </div>
       )}
+
+      {/* Tarjeta de instalación de app */}
+      <div className="mb-6">
+        <InstallAppCard />
+      </div>
 
       {/* Stats principales */}
       <div className="grid grid-cols-2 gap-4 mb-6">

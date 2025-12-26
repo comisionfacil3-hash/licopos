@@ -1,9 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
-import { AuthProvider } from '@/lib/hooks/use-auth' // ← mantener igual
-
-// ... resto del código igual
+import { AuthProvider } from '@/lib/hooks/use-auth'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -18,6 +16,15 @@ export const metadata: Metadata = {
   },
   formatDetection: {
     telephone: false,
+  },
+  icons: {
+    icon: [
+      { url: '/icons/icon-192x192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/icon-512x512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/icons/icon-180x180.png', sizes: '180x180', type: 'image/png' },
+    ],
   },
 }
 
@@ -36,6 +43,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es-BO">
+      <head>
+        {/* PWA Meta Tags */}
+        <meta name="application-name" content="LicoPos" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="LicoPos" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <link rel="apple-touch-icon" href="/icons/icon-180x180.png" />
+      </head>
       <body className={inter.className}>
         <AuthProvider>
           {children}

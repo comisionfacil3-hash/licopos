@@ -265,6 +265,26 @@ export default function ReportesPage() {
                   Análisis completo de rentabilidad y break-even point
                 </p>
               </button>
+
+              {/* Estado de Resultados - NUEVO ⭐ */}
+              <button
+                onClick={() => router.push('/dashboard/reportes/financieros/estado-resultados')}
+                className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-5 border-2 border-green-400 hover:shadow-2xl transition-all text-left group relative overflow-hidden"
+              >
+                <div className="absolute top-0 right-0 w-24 h-24 bg-white opacity-10 rounded-full -mr-12 -mt-12"></div>
+                <div className="flex items-start justify-between mb-3 relative z-10">
+                  <div className="w-12 h-12 bg-white bg-opacity-20 rounded-lg flex items-center justify-center backdrop-blur-sm">
+                    <DollarSign className="w-6 h-6 text-white" />
+                  </div>
+                  <span className="px-2 py-1 bg-yellow-400 text-yellow-900 text-xs font-bold rounded-full flex items-center gap-1">
+                    ⭐ NUEVO
+                  </span>
+                </div>
+                <h3 className="font-bold text-white mb-1 relative z-10">Estado de Resultados</h3>
+                <p className="text-sm text-green-50 relative z-10">
+                  Ganancias netas detalladas por día, semana y mes
+                </p>
+              </button>
             </div>
           </div>
         ) : (
