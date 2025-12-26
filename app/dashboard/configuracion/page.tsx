@@ -36,6 +36,14 @@ export default function ConfiguracionPage() {
   
   const [error, setError] = useState('')
 
+  // Costos Fijos - AGREGADO
+  const [costosFijos, setCostosFijos] = useState({
+    alquiler: 0,
+    servicios: 0,
+    sueldos: 0,
+    otros: 0
+  })
+
   const { usuario } = useAuth()
   const supabase = createClient()
 
@@ -75,6 +83,22 @@ export default function ConfiguracionPage() {
 
         if (sucursalData?.logo_url) {
           setLogoUrl(sucursalData.logo_url)
+        }
+
+        // Obtener costos fijos de la sucursal - AGREGADO
+        const { data: costosData } = await supabase
+          .from('costos_fijos')
+          .select('*')
+          .eq('sucursal_id', usuario.sucursal_id)
+          .single()
+
+        if (costosData) {
+          setCostosFijos({
+            alquiler: parseFloat(costosData.alquiler_mensual) || 0,
+            servicios: parseFloat(costosData.servicios_mensuales) || 0,
+            sueldos: parseFloat(costosData.sueldos_mensuales) || 0,
+            otros: parseFloat(costosData.otros_gastos_mensuales) || 0
+          })
         }
       }
 
@@ -226,21 +250,22 @@ export default function ConfiguracionPage() {
     setSaving(true)
 
     try {
-      // Si tiene PIN actual, verificarlo
+      // Si tiene PIN actual, verificarlo primero
       if (tienePinActual) {
         const { data: userData } = await supabase
           .from('usuarios')
           .select('pin')
           .eq('id', usuario?.id)
           .single()
-        
+
         if (userData?.pin !== pinActual) {
-          setError('El PIN actual es incorrecto')
+          setError('PIN actual incorrecto')
           setSaving(false)
           return
         }
       }
 
+      // Actualizar PIN
       const { error: updateError } = await supabase
         .from('usuarios')
         .update({ pin: pinNuevo })
@@ -248,12 +273,13 @@ export default function ConfiguracionPage() {
 
       if (updateError) throw updateError
 
+      setTienePinActual(true)
       setShowPinModal(false)
       setPinActual('')
       setPinNuevo('')
       setPinConfirmar('')
-      setTienePinActual(true)
-      mostrarExito('PIN configurado correctamente')
+      mostrarExito('PIN actualizado')
+
     } catch (err) {
       console.error('Error:', err)
       setError('Error al guardar el PIN')
@@ -283,20 +309,70 @@ export default function ConfiguracionPage() {
     setSaving(true)
 
     try {
-      const { error: authError } = await supabase.auth.updateUser({
+      // Actualizar contraseña en Supabase Auth
+      const { error: updateError } = await supabase.auth.updateUser({
         password: passwordNueva
       })
 
-      if (authError) throw authError
+      if (updateError) throw updateError
 
       setShowPasswordModal(false)
       setPasswordActual('')
       setPasswordNueva('')
       setPasswordConfirmar('')
       mostrarExito('Contraseña actualizada')
-    } catch (err: any) {
+
+    } catch (err) {
       console.error('Error:', err)
-      setError(err.message || 'Error al cambiar la contraseña')
+      setError('Error al cambiar la contraseña. Verifica tu contraseña actual.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // NUEVA FUNCIÓN - AGREGADA
+  const guardarCostosFijos = async () => {
+    setSaving(true)
+    setError('')
+
+    try {
+      // Verificar si ya existe registro
+      const { data: existente } = await supabase
+        .from('costos_fijos')
+        .select('id')
+        .eq('sucursal_id', usuario?.sucursal_id)
+        .single()
+
+      const datosGuardar = {
+        sucursal_id: usuario?.sucursal_id,
+        alquiler_mensual: costosFijos.alquiler,
+        servicios_mensuales: costosFijos.servicios,
+        sueldos_mensuales: costosFijos.sueldos,
+        otros_gastos_mensuales: costosFijos.otros,
+        updated_at: new Date().toISOString()
+      }
+
+      if (existente) {
+        // Actualizar
+        const { error: updateError } = await supabase
+          .from('costos_fijos')
+          .update(datosGuardar)
+          .eq('sucursal_id', usuario?.sucursal_id)
+
+        if (updateError) throw updateError
+      } else {
+        // Crear
+        const { error: insertError } = await supabase
+          .from('costos_fijos')
+          .insert(datosGuardar)
+
+        if (insertError) throw insertError
+      }
+
+      mostrarExito('Costos fijos actualizados')
+    } catch (err) {
+      console.error('Error:', err)
+      setError('Error al guardar los costos fijos')
     } finally {
       setSaving(false)
     }
@@ -304,153 +380,232 @@ export default function ConfiguracionPage() {
 
   if (loading) {
     return (
-      <div className="p-4">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/3"></div>
-          <div className="h-40 bg-gray-200 rounded-xl"></div>
-          <div className="h-40 bg-gray-200 rounded-xl"></div>
-        </div>
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
       </div>
     )
   }
 
   return (
-    <div className="p-4 pb-24 max-w-lg mx-auto">
-      {/* Modal Éxito */}
+    <div className="min-h-screen bg-gray-50 pb-24">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-100 sticky top-0 z-10">
+        <div className="px-4 py-4">
+          <h1 className="text-2xl font-bold text-gray-900">⚙️ Configuración</h1>
+          <p className="text-sm text-gray-600 mt-1">Personaliza tu perfil y preferencias</p>
+        </div>
+      </div>
+
+      {/* Mensaje de éxito flotante */}
       {showExito && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-8 text-center max-w-sm w-full animate-bounce-in">
-            <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-gray-900">{mensajeExito}</h2>
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-bounce-in">
+          <div className="bg-emerald-500 text-white px-6 py-3 rounded-xl shadow-lg flex items-center gap-2">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            <span className="font-medium">{mensajeExito}</span>
           </div>
         </div>
       )}
 
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Configuración</h1>
-        <p className="text-gray-500 text-sm">Gestiona tu perfil y negocio</p>
-      </div>
-
-      {/* Mi Perfil */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5 mb-4">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Mi Perfil</h2>
-        
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
-            <input
-              type="text"
-              value={nombre}
-              onChange={(e) => setNombre(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
-              placeholder="Tu nombre"
-            />
+      <div className="p-4 space-y-4 max-w-2xl mx-auto">
+        {/* Error global */}
+        {error && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            {error}
           </div>
+        )}
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
-            <input
-              type="tel"
-              value={telefono}
-              onChange={(e) => setTelefono(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
-              placeholder="Tu teléfono"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-            <input
-              type="email"
-              value={email}
-              disabled
-              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-500"
-            />
-            <p className="text-xs text-gray-400 mt-1">El email no se puede cambiar</p>
-          </div>
-
-          <button
-            onClick={guardarPerfil}
-            disabled={saving}
-            className="w-full py-2.5 bg-emerald-500 text-white rounded-xl font-medium hover:bg-emerald-600 disabled:opacity-50 transition-colors"
-          >
-            {saving ? 'Guardando...' : 'Guardar Cambios'}
-          </button>
-        </div>
-      </div>
-
-      {/* Logo del Negocio */}
-      <div className="bg-white rounded-xl border border-gray-100 p-5 mb-4">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Logo del Negocio</h2>
-        <p className="text-sm text-gray-500 mb-4">Este logo aparecerá en las cotizaciones</p>
-        
-        <div className="space-y-4">
-          {logoUrl ? (
-            <div className="flex items-center gap-4">
-              <div className="relative w-32 h-32 border-2 border-gray-200 rounded-xl overflow-hidden bg-gray-50">
-                <Image
-                  src={logoUrl}
-                  alt="Logo"
-                  fill
-                  className="object-contain p-2"
-                />
-              </div>
-              <div className="flex-1 space-y-2">
-                <label className="block">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={subirLogo}
-                    className="hidden"
-                    disabled={uploadingLogo}
-                  />
-                  <span className="inline-block px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 cursor-pointer text-sm">
-                    {uploadingLogo ? 'Subiendo...' : 'Cambiar Logo'}
-                  </span>
-                </label>
-                <button
-                  onClick={eliminarLogo}
-                  className="block px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm"
-                >
-                  Eliminar Logo
-                </button>
-              </div>
-            </div>
-          ) : (
+        {/* Perfil */}
+        <div className="bg-white rounded-xl border border-gray-100 p-5">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Información Personal</h2>
+          
+          <div className="space-y-3">
             <div>
-              <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-gray-300 rounded-xl cursor-pointer hover:border-emerald-500 transition-colors bg-gray-50">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Nombre completo</label>
+              <input
+                type="text"
+                value={nombre}
+                onChange={(e) => setNombre(e.target.value)}
+                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                placeholder="Tu nombre"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
+              <input
+                type="tel"
+                value={telefono}
+                onChange={(e) => setTelefono(e.target.value)}
+                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                placeholder="Opcional"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input
+                type="email"
+                value={email}
+                disabled
+                className="w-full px-4 py-2.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-500 cursor-not-allowed"
+              />
+              <p className="text-xs text-gray-500 mt-1">El email no se puede modificar</p>
+            </div>
+
+            <button
+              onClick={guardarPerfil}
+              disabled={saving}
+              className="w-full px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50 font-medium transition-colors"
+            >
+              {saving ? 'Guardando...' : 'Guardar Cambios'}
+            </button>
+          </div>
+        </div>
+
+        {/* Logo de la Sucursal */}
+        {(usuario?.rol === 'admin' || usuario?.rol === 'gerente') && (
+          <div className="bg-white rounded-xl border border-gray-100 p-5">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Logo de la Sucursal</h2>
+            
+            <div className="flex flex-col items-center gap-4">
+              {logoUrl ? (
+                <div className="relative">
+                  <Image
+                    src={logoUrl}
+                    alt="Logo"
+                    width={200}
+                    height={200}
+                    className="rounded-xl object-contain border border-gray-200"
+                  />
+                  <button
+                    onClick={eliminarLogo}
+                    className="absolute -top-2 -right-2 w-8 h-8 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors flex items-center justify-center"
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : (
+                <div className="w-48 h-48 bg-gray-100 rounded-xl flex items-center justify-center border-2 border-dashed border-gray-300">
+                  <p className="text-gray-400 text-sm">Sin logo</p>
+                </div>
+              )}
+
+              <label className="cursor-pointer">
                 <input
                   type="file"
                   accept="image/*"
                   onChange={subirLogo}
-                  className="hidden"
                   disabled={uploadingLogo}
+                  className="hidden"
                 />
-                <div className="text-center">
-                  {uploadingLogo ? (
-                    <>
-                      <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-                      <p className="text-sm text-gray-600">Subiendo...</p>
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-12 h-12 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                      <p className="text-sm text-gray-600 mb-1">Haz clic para subir un logo</p>
-                      <p className="text-xs text-gray-400">PNG, JPG, WEBP (máx. 2MB)</p>
-                    </>
-                  )}
-                </div>
+                <span className="px-6 py-2.5 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors inline-block font-medium">
+                  {uploadingLogo ? 'Subiendo...' : logoUrl ? 'Cambiar Logo' : 'Subir Logo'}
+                </span>
               </label>
+              
+              <p className="text-xs text-gray-500 text-center">
+                Formato: JPG, PNG • Máx: 2MB<br />
+                Recomendado: 500x500 px
+              </p>
             </div>
-          )}
-        </div>
-      </div>
+          </div>
+        )}
+
+        {/* Costos Fijos del Negocio - NUEVA SECCIÓN AGREGADA */}
+        {(usuario?.rol === 'admin' || usuario?.rol === 'gerente') && (
+          <div className="bg-white rounded-xl border border-gray-100 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">💼 Costos Fijos del Negocio</h2>
+                <p className="text-sm text-gray-500 mt-1">Configura tus gastos mensuales para el análisis de punto de equilibrio</p>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Alquiler Mensual (Bs.)
+                </label>
+                <input
+                  type="number"
+                  value={costosFijos.alquiler}
+                  onChange={(e) => setCostosFijos({...costosFijos, alquiler: parseFloat(e.target.value) || 0})}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                  placeholder="0.00"
+                  min="0"
+                  step="100"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Servicios Mensuales (Bs.)
+                </label>
+                <input
+                  type="number"
+                  value={costosFijos.servicios}
+                  onChange={(e) => setCostosFijos({...costosFijos, servicios: parseFloat(e.target.value) || 0})}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                  placeholder="0.00"
+                  min="0"
+                  step="50"
+                />
+                <p className="text-xs text-gray-500 mt-1">Luz, agua, internet, teléfono</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Sueldos Mensuales (Bs.)
+                </label>
+                <input
+                  type="number"
+                  value={costosFijos.sueldos}
+                  onChange={(e) => setCostosFijos({...costosFijos, sueldos: parseFloat(e.target.value) || 0})}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                  placeholder="0.00"
+                  min="0"
+                  step="500"
+                />
+                <p className="text-xs text-gray-500 mt-1">Total de salarios del personal</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Otros Gastos Mensuales (Bs.)
+                </label>
+                <input
+                  type="number"
+                  value={costosFijos.otros}
+                  onChange={(e) => setCostosFijos({...costosFijos, otros: parseFloat(e.target.value) || 0})}
+                  className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none"
+                  placeholder="0.00"
+                  min="0"
+                  step="100"
+                />
+                <p className="text-xs text-gray-500 mt-1">Seguridad, limpieza, mantenimiento</p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl mb-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-blue-900">Total Costos Fijos Mensuales:</span>
+                <span className="text-2xl font-bold text-blue-600">
+                  Bs. {(costosFijos.alquiler + costosFijos.servicios + costosFijos.sueldos + costosFijos.otros).toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={guardarCostosFijos}
+              disabled={saving}
+              className="w-full px-4 py-2.5 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50 font-medium transition-colors"
+            >
+              {saving ? 'Guardando...' : 'Guardar Costos Fijos'}
+            </button>
+          </div>
+        )}
 
       {/* Seguridad */}
       <div className="bg-white rounded-xl border border-gray-100 p-5">
@@ -662,6 +817,8 @@ export default function ConfiguracionPage() {
           </div>
         </div>
       )}
+
+      </div>
 
       <style jsx>{`
         @keyframes bounce-in {
