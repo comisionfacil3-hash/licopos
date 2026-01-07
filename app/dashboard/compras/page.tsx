@@ -141,7 +141,7 @@ export default function ComprasPage() {
                 saldoEfectivo -= mov.monto
               }
             } else if (mov.metodo_pago === 'qr') {
-              if (mov.tipo === 'ingreso') {
+              if (mov.tipo === 'ingreso' || mov.tipo === 'apertura') {
                 saldoQR += mov.monto
               } else if (mov.tipo === 'egreso') {
                 saldoQR -= mov.monto
