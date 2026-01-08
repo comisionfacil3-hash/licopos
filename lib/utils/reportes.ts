@@ -89,7 +89,7 @@ export function prepararDatosParaExcel(datos: any[]): any[] {
     const itemLimpio: any = {}
     
     Object.keys(item).forEach(key => {
-      let valor = item[key]
+      const valor = item[key]
       
       // Si es un valor de moneda (Bs. X.XX), extraer solo el número
       if (typeof valor === 'string' && valor.startsWith('Bs. ')) {
