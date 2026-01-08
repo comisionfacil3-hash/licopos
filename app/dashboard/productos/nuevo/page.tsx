@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/hooks/use-auth'
 import { Categoria, CreateProductoForm } from '@/types/database'
 import { calcularMargen } from '@/lib/utils/productos'
 import { formatCurrency } from '@/lib/utils/format'
+import { NumericInput } from '@/components/ui/numeric-input'
 
 export default function NuevoProductoPage() {
   const [formData, setFormData] = useState<CreateProductoForm>({
@@ -362,11 +363,10 @@ export default function NuevoProductoPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="label">Precio de Compra *</label>
-                <input
-                  type="number"
+                <NumericInput
                   step="0.01"
                   value={formData.precio_compra}
-                  onChange={(e) => setFormData({ ...formData, precio_compra: parseFloat(e.target.value) || 0 })}
+                  onChange={(value) => setFormData({ ...formData, precio_compra: value })}
                   className="input"
                   placeholder="0.00"
                   required
@@ -375,11 +375,10 @@ export default function NuevoProductoPage() {
 
               <div>
                 <label className="label">Precio de Venta *</label>
-                <input
-                  type="number"
+                <NumericInput
                   step="0.01"
                   value={formData.precio_venta}
-                  onChange={(e) => setFormData({ ...formData, precio_venta: parseFloat(e.target.value) || 0 })}
+                  onChange={(value) => setFormData({ ...formData, precio_venta: value })}
                   className="input"
                   placeholder="0.00"
                   required
@@ -428,34 +427,34 @@ export default function NuevoProductoPage() {
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="label">Stock Inicial</label>
-                <input
-                  type="number"
+                <NumericInput
                   value={formData.stock_actual}
-                  onChange={(e) => setFormData({ ...formData, stock_actual: parseInt(e.target.value) || 0 })}
+                  onChange={(value) => setFormData({ ...formData, stock_actual: value })}
                   className="input"
                   placeholder="0"
+                  allowDecimal={false}
                 />
               </div>
 
               <div>
                 <label className="label">Stock Mínimo</label>
-                <input
-                  type="number"
+                <NumericInput
                   value={formData.stock_minimo}
-                  onChange={(e) => setFormData({ ...formData, stock_minimo: parseInt(e.target.value) || 0 })}
+                  onChange={(value) => setFormData({ ...formData, stock_minimo: value })}
                   className="input"
                   placeholder="5"
+                  allowDecimal={false}
                 />
               </div>
 
               <div>
                 <label className="label">Stock Máximo</label>
-                <input
-                  type="number"
+                <NumericInput
                   value={formData.stock_maximo}
-                  onChange={(e) => setFormData({ ...formData, stock_maximo: parseInt(e.target.value) || 0 })}
+                  onChange={(value) => setFormData({ ...formData, stock_maximo: value })}
                   className="input"
                   placeholder="100"
+                  allowDecimal={false}
                 />
               </div>
             </div>
