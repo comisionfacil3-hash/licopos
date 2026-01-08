@@ -552,6 +552,11 @@ switch (filtroFecha) {
                   <p className={`font-bold text-lg ${venta.estado === 'anulada' ? 'text-red-600 line-through' : 'text-gray-900'}`}>
                     {formatCurrency(venta.total)}
                   </p>
+                  {venta.descuento > 0 && (
+                    <p className="text-xs text-red-500">
+                      -{formatCurrency(venta.descuento)} de descuento
+                    </p>
+                  )}
                   <p className="text-sm mt-1">
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                       venta.metodo_pago === 'efectivo' ? 'bg-green-100 text-green-700' :
