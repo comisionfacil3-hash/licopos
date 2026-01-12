@@ -24,9 +24,12 @@ export default function CategoriasPage() {
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [showExito, setShowExito] = useState(false)
+  const [showEliminar, setShowEliminar] = useState(false)
+  const [categoriaAEliminar, setCategoriaAEliminar] = useState<Categoria | null>(null)
   const [mensajeExito, setMensajeExito] = useState('')
   const [editando, setEditando] = useState<Categoria | null>(null)
   const [saving, setSaving] = useState(false)
+  const [eliminando, setEliminando] = useState(false)
   const [error, setError] = useState('')
   
   const [nombre, setNombre] = useState('')
@@ -144,6 +147,54 @@ export default function CategoriasPage() {
     }
   }
 
+  const abrirEliminar = (categoria: Categoria) => {
+    setCategoriaAEliminar(categoria)
+    setError('')
+    setShowEliminar(true)
+  }
+
+  const eliminarCategoria = async () => {
+    if (!categoriaAEliminar) return
+
+    setEliminando(true)
+    setError('')
+
+    try {
+      // Verificar si hay productos usando esta categoría
+      const { data: productos, error: checkError } = await supabase
+        .from('productos')
+        .select('id')
+        .eq('categoria_id', categoriaAEliminar.id)
+        .limit(1)
+
+      if (checkError) throw checkError
+
+      if (productos && productos.length > 0) {
+        setError('No se puede eliminar: hay productos usando esta categoría')
+        setEliminando(false)
+        return
+      }
+
+      // Eliminar la categoría
+      const { error: deleteError } = await supabase
+        .from('categorias')
+        .delete()
+        .eq('id', categoriaAEliminar.id)
+
+      if (deleteError) throw deleteError
+
+      mostrarExito('Categoría eliminada')
+      setShowEliminar(false)
+      setCategoriaAEliminar(null)
+      await fetchCategorias()
+    } catch (err: any) {
+      console.error('Error:', err)
+      setError(err.message || 'Error al eliminar')
+    } finally {
+      setEliminando(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="p-4">
@@ -223,6 +274,15 @@ export default function CategoriasPage() {
               >
                 {categoria.activa ? 'Desactivar' : 'Activar'}
               </button>
+              <button
+                onClick={() => abrirEliminar(categoria)}
+                className="px-3 py-1.5 text-sm text-red-600 bg-red-50 rounded-lg hover:bg-red-100"
+                title="Eliminar"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
             </div>
           </div>
         ))}
@@ -297,6 +357,57 @@ export default function CategoriasPage() {
               >
                 {saving ? 'Guardando...' : 'Guardar'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Eliminar */}
+      {showEliminar && categoriaAEliminar && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm animate-bounce-in">
+            <div className="p-6">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+
+              <h3 className="text-lg font-bold text-gray-900 text-center mb-2">
+                ¿Eliminar categoría?
+              </h3>
+              <p className="text-gray-500 text-center text-sm mb-4">
+                Se eliminará: <strong>{categoriaAEliminar.nombre}</strong>
+                <br />
+                Esta acción no se puede deshacer
+              </p>
+
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm mb-4">
+                  {error}
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowEliminar(false)
+                    setCategoriaAEliminar(null)
+                    setError('')
+                  }}
+                  disabled={eliminando}
+                  className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={eliminarCategoria}
+                  disabled={eliminando}
+                  className="flex-1 px-4 py-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 disabled:opacity-50 font-medium"
+                >
+                  {eliminando ? 'Eliminando...' : 'Eliminar'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

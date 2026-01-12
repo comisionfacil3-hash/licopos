@@ -48,8 +48,7 @@ export default function CajaPage() {
   const [cajaAbierta, setCajaAbierta] = useState<Caja | null>(null)
   const [movimientos, setMovimientos] = useState<MovimientoCaja[]>([])
   const [resumen, setResumen] = useState<ResumenCaja | null>(null)
-  const [ultimoCierreEfectivo, setUltimoCierreEfectivo] = useState<number>(0)
-  const [ultimoCierreQR, setUltimoCierreQR] = useState<number>(0)
+  const [ultimoCierre, setUltimoCierre] = useState<Caja | null>(null)
   const [loading, setLoading] = useState(true)
   
   const [showAbrirModal, setShowAbrirModal] = useState(false)
@@ -158,15 +157,14 @@ export default function CajaPage() {
 
     const { data } = await supabase
       .from('cajas')
-      .select('monto_final, monto_final_qr')
+      .select('*')
       .eq('sucursal_id', usuario.sucursal_id)
       .eq('estado', 'cerrada')
       .order('fecha_cierre', { ascending: false })
       .limit(1)
       .maybeSingle()
 
-    setUltimoCierreEfectivo(data?.monto_final || 0)
-    setUltimoCierreQR(data?.monto_final_qr || 0)
+    setUltimoCierre(data)
   }
 
   const mostrarExito = (mensaje: string) => {
@@ -286,8 +284,12 @@ export default function CajaPage() {
       setMontoFinalEfectivo('')
       setMontoFinalQR('')
       setNotasCierre('')
-      mostrarExito('¡Caja cerrada correctamente!')
+      
+      // IMPORTANTE: Actualizar último cierre ANTES de recargar para mostrar datos frescos
+      await loadUltimoCierre()
       await loadCaja()
+      
+      mostrarExito('¡Caja cerrada correctamente!')
     } catch (err) {
       console.error('Error cerrando caja:', err)
       setError('Error al cerrar la caja')
@@ -344,8 +346,8 @@ export default function CajaPage() {
   }
 
   const openAbrirModal = () => {
-    setMontoInicialEfectivo(ultimoCierreEfectivo.toString())
-    setMontoInicialQR(ultimoCierreQR.toString())
+    setMontoInicialEfectivo(ultimoCierre?.monto_final ? ultimoCierre.monto_final.toString() : '')
+    setMontoInicialQR(ultimoCierre?.monto_final_qr ? ultimoCierre.monto_final_qr.toString() : '')
     setError('')
     setShowAbrirModal(true)
   }
@@ -393,27 +395,56 @@ export default function CajaPage() {
       </div>
 
       {!cajaAbierta ? (
-        <div className="bg-white rounded-xl border border-gray-100 p-8 text-center">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
+        <div className="bg-white rounded-xl border border-gray-100 p-8">
+          <div className="text-center mb-6">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Caja Cerrada</h3>
           </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Caja Cerrada</h3>
-          <p className="text-gray-500 mb-1">
-            {ultimoCierreEfectivo > 0 || ultimoCierreQR > 0 
-              ? 'Último cierre:'
-              : 'No hay registros de cierres anteriores'}
-          </p>
-          {(ultimoCierreEfectivo > 0 || ultimoCierreQR > 0) && (
-            <div className="text-sm text-gray-600 mb-4">
-              <p>💵 Efectivo: {formatCurrency(ultimoCierreEfectivo)}</p>
-              <p>📱 QR: {formatCurrency(ultimoCierreQR)}</p>
+          
+          {ultimoCierre && (
+            <div className="bg-gray-50 rounded-xl p-4 mb-6">
+              <p className="text-sm font-medium text-gray-700 mb-3">📊 Último cierre de caja</p>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Fecha:</span>
+                  <span className="font-medium">{formatDateTime(ultimoCierre.fecha_cierre!)}</span>
+                </div>
+                <div className="border-t border-gray-200 pt-2 mt-2">
+                  <div className="flex justify-between mb-1">
+                    <span className="text-gray-600">💵 Efectivo:</span>
+                    <span className="font-bold text-gray-900">{formatCurrency(ultimoCierre.monto_final || 0)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">📱 QR:</span>
+                    <span className="font-bold text-gray-900">{formatCurrency(ultimoCierre.monto_final_qr || 0)}</span>
+                  </div>
+                  <div className="flex justify-between mt-2 pt-2 border-t border-gray-200">
+                    <span className="text-gray-700 font-medium">Total:</span>
+                    <span className="font-bold text-emerald-600">
+                      {formatCurrency((ultimoCierre.monto_final || 0) + (ultimoCierre.monto_final_qr || 0))}
+                    </span>
+                  </div>
+                </div>
+                {ultimoCierre.notas && (
+                  <div className="pt-2 border-t border-gray-200">
+                    <p className="text-xs text-gray-500"><strong>Notas:</strong> {ultimoCierre.notas}</p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
+          
+          {!ultimoCierre && (
+            <p className="text-gray-500 text-center mb-6">No hay registros de cierres anteriores</p>
+          )}
+          
           <button
             onClick={openAbrirModal}
-            className="px-6 py-3 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-colors font-medium"
+            className="w-full px-6 py-3 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 transition-colors font-medium"
           >
             Abrir Caja
           </button>
@@ -543,9 +574,9 @@ export default function CajaPage() {
                   step="0.01"
                   min="0"
                 />
-                {ultimoCierreEfectivo > 0 && (
+                {ultimoCierre && ultimoCierre.monto_final! > 0 && (
                   <p className="text-xs text-gray-500 mt-1">
-                    Sugerido: {formatCurrency(ultimoCierreEfectivo)}
+                    Sugerido: {formatCurrency(ultimoCierre.monto_final!)}
                   </p>
                 )}
               </div>
@@ -562,9 +593,9 @@ export default function CajaPage() {
                   step="0.01"
                   min="0"
                 />
-                {ultimoCierreQR > 0 && (
+                {ultimoCierre && ultimoCierre.monto_final_qr! > 0 && (
                   <p className="text-xs text-gray-500 mt-1">
-                    Sugerido: {formatCurrency(ultimoCierreQR)}
+                    Sugerido: {formatCurrency(ultimoCierre.monto_final_qr!)}
                   </p>
                 )}
               </div>

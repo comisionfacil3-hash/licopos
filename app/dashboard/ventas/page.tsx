@@ -13,6 +13,8 @@ interface VentaDetalle {
   cantidad: number
   precio_unitario: number
   precio_original: number
+  descuento_monto: number
+  precio_final: number
   subtotal: number
   producto_nombre: string
   producto_codigo: string
@@ -46,11 +48,15 @@ interface Venta {
 export default function VentasPage() {
   const [ventas, setVentas] = useState<Venta[]>([])
   const [loading, setLoading] = useState(true)
-  const [filtroFecha, setFiltroFecha] = useState<'hoy' | 'semanal' | 'mensual'>('hoy')
+  const [filtroFecha, setFiltroFecha] = useState<'hoy' | 'semanal' | 'mensual' | 'personalizado'>('hoy')
   const [filtroMetodo, setFiltroMetodo] = useState('todos')
   const [ventaSeleccionada, setVentaSeleccionada] = useState<Venta | null>(null)
   const [exportando, setExportando] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  // Estados para filtro personalizado
+  const [fechaInicio, setFechaInicio] = useState('')
+  const [fechaFin, setFechaFin] = useState('')
 
   // Estados para anulación
   const [showAnular, setShowAnular] = useState(false)
@@ -66,7 +72,7 @@ export default function VentasPage() {
   if (usuario?.sucursal_id) {
     loadVentas()
   }
-}, [usuario?.sucursal_id, filtroFecha])
+}, [usuario?.sucursal_id, filtroFecha, fechaInicio, fechaFin])
 
   const loadVentas = async () => {
     if (!usuario?.sucursal_id) return
@@ -76,22 +82,33 @@ export default function VentasPage() {
     
     try {
       const ahora = new Date()
-let fechaInicio: Date
-let fechaFin: Date = new Date(ahora)
-fechaFin.setHours(23, 59, 59, 999)
+let fechaInicioCalc: Date
+let fechaFinCalc: Date = new Date(ahora)
+fechaFinCalc.setHours(23, 59, 59, 999)
 
 switch (filtroFecha) {
   case 'hoy':
-    fechaInicio = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate())
+    fechaInicioCalc = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate())
     break
   case 'semanal':
-    fechaInicio = new Date(ahora)
-    fechaInicio.setDate(ahora.getDate() - 7)
-    fechaInicio.setHours(0, 0, 0, 0)
+    fechaInicioCalc = new Date(ahora)
+    fechaInicioCalc.setDate(ahora.getDate() - 7)
+    fechaInicioCalc.setHours(0, 0, 0, 0)
     break
   case 'mensual':
-    fechaInicio = new Date(ahora.getFullYear(), ahora.getMonth(), 1)
-    fechaInicio.setHours(0, 0, 0, 0)
+    fechaInicioCalc = new Date(ahora.getFullYear(), ahora.getMonth(), 1)
+    fechaInicioCalc.setHours(0, 0, 0, 0)
+    break
+  case 'personalizado':
+    if (fechaInicio && fechaFin) {
+      fechaInicioCalc = new Date(fechaInicio)
+      fechaInicioCalc.setHours(0, 0, 0, 0)
+      fechaFinCalc = new Date(fechaFin)
+      fechaFinCalc.setHours(23, 59, 59, 999)
+    } else {
+      // Si no hay fechas, usar hoy
+      fechaInicioCalc = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate())
+    }
     break
 }
 
@@ -100,8 +117,8 @@ switch (filtroFecha) {
         .from('ventas')
         .select('*')
         .eq('sucursal_id', usuario.sucursal_id)
-        .gte('created_at', fechaInicio.toISOString())
-        .lte('created_at', fechaFin.toISOString())
+        .gte('created_at', fechaInicioCalc.toISOString())
+        .lte('created_at', fechaFinCalc.toISOString())
         .order('created_at', { ascending: false })
 
       if (ventasError) {
@@ -151,7 +168,7 @@ switch (filtroFecha) {
         }
       }
 
-      // 5. Cargar todos los detalles de ventas
+      // 5. Cargar todos los detalles de ventas (AHORA INCLUYE descuento_monto y precio_final)
       const { data: detallesData } = await supabase
         .from('venta_detalles')
         .select('*')
@@ -186,6 +203,8 @@ switch (filtroFecha) {
             cantidad: d.cantidad,
             precio_unitario: d.precio_unitario,
             precio_original: d.precio_original || d.precio_unitario,
+            descuento_monto: d.descuento_monto || 0,
+            precio_final: d.precio_final || d.precio_unitario,
             subtotal: d.subtotal,
             producto_nombre: productosMap[d.producto_id]?.nombre || 'Producto eliminado',
             producto_codigo: productosMap[d.producto_id]?.codigo || 'N/A',
@@ -197,7 +216,7 @@ switch (filtroFecha) {
           numero_venta: venta.numero_venta,
           total: venta.total,
           subtotal: venta.subtotal,
-          descuento: venta.descuento || 0,
+          descuento: venta.descuento,
           metodo_pago: venta.metodo_pago,
           monto_efectivo: venta.monto_efectivo || 0,
           monto_qr: venta.monto_qr || 0,
@@ -218,131 +237,78 @@ switch (filtroFecha) {
       })
 
       setVentas(ventasCompletas)
-    } catch (err: any) {
-      console.error('Error general:', err)
-      setErrorMsg(err?.message || 'Error desconocido')
+    } catch (err) {
+      console.error('Error cargando ventas:', err)
+      setErrorMsg('Error al cargar las ventas')
       setVentas([])
     } finally {
       setLoading(false)
     }
   }
 
-  // Filtrar ventas por método de pago
+  // Filtrar ventas
   const ventasFiltradas = useMemo(() => {
-    if (filtroMetodo === 'todos') return ventas
-    return ventas.filter(v => v.metodo_pago === filtroMetodo)
+    let resultado = [...ventas]
+
+    if (filtroMetodo !== 'todos') {
+      resultado = resultado.filter(v => v.metodo_pago === filtroMetodo)
+    }
+
+    return resultado
   }, [ventas, filtroMetodo])
 
-  const ventasCompletadas = ventasFiltradas.filter(v => v.estado === 'completada')
-  const ventasAnuladas = ventasFiltradas.filter(v => v.estado === 'anulada')
-  const totalVentas = ventasCompletadas.reduce((sum, v) => sum + v.total, 0)
-  const totalEfectivo = ventasCompletadas.reduce((sum, v) => sum + v.monto_efectivo, 0)
-  const totalQR = ventasCompletadas.reduce((sum, v) => sum + v.monto_qr, 0)
-
-  const getMetodoPagoIcon = (metodo: string) => {
-    switch (metodo) {
-      case 'efectivo': return '💵'
-      case 'qr': return '📱'
-      case 'credito': return '📝'
-      case 'mixto': return '🔄'
-      default: return '💰'
+  // Calcular totales
+  const totales = useMemo(() => {
+    const ventasActivas = ventasFiltradas.filter(v => v.estado !== 'anulada')
+    return {
+      cantidad: ventasActivas.length,
+      total: ventasActivas.reduce((sum, v) => sum + v.total, 0),
+      efectivo: ventasActivas.reduce((sum, v) => sum + v.monto_efectivo, 0),
+      qr: ventasActivas.reduce((sum, v) => sum + v.monto_qr, 0),
+      credito: ventasActivas.reduce((sum, v) => sum + v.monto_credito, 0)
     }
-  }
+  }, [ventasFiltradas])
 
-  const getMetodoPagoText = (metodo: string) => {
-    switch (metodo) {
-      case 'efectivo': return 'Efectivo'
-      case 'qr': return 'QR'
-      case 'credito': return 'Crédito'
-      case 'mixto': return 'Mixto'
-      default: return metodo
-    }
-  }
-
-  // Exportar a Excel por productos
-  const exportarExcel = () => {
-    if (ventasFiltradas.length === 0) return
-    
+  // Exportar a Excel
+  const exportarExcel = async () => {
     setExportando(true)
-    
     try {
-      const datosExcel: any[] = []
-      
-      ventasFiltradas.forEach(venta => {
-        if (venta.estado === 'anulada') return
-        
-        venta.detalles.forEach(detalle => {
-          datosExcel.push({
-            'Venta #': venta.numero_venta,
-            'Fecha': formatDateTime(venta.created_at),
-            'Producto': detalle.producto_nombre,
-            'Código': detalle.producto_codigo,
-            'Cantidad': detalle.cantidad,
-            'Costo Unit.': detalle.costo_unitario,
-            'Costo Total': detalle.costo_unitario * detalle.cantidad,
-            'Precio Unit.': detalle.precio_unitario,
-            'Subtotal': detalle.subtotal,
-            'Utilidad': detalle.subtotal - (detalle.costo_unitario * detalle.cantidad),
-            'Método Pago': getMetodoPagoText(venta.metodo_pago),
-            'Cliente': venta.cliente_nombre || 'Sin cliente',
-            'Vendedor': venta.usuario_nombre || 'N/A',
-            'Total Venta': venta.total
-          })
-        })
-      })
-
-      const resumen = [
-        { Concepto: 'Período', Valor: filtroFecha === 'hoy' ? 'Hoy' : filtroFecha === 'semanal' ? 'Última semana' : 'Este mes' },
-        { Concepto: 'Total Ventas', Valor: ventasCompletadas.length },
-        { Concepto: 'Total Vendido', Valor: formatCurrency(totalVentas) },
-        { Concepto: 'Total Efectivo', Valor: formatCurrency(totalEfectivo) },
-        { Concepto: 'Total QR', Valor: formatCurrency(totalQR) },
-        { Concepto: 'Ventas Anuladas', Valor: ventasAnuladas.length },
-      ]
+      const ventasExport = ventasFiltradas.map(v => ({
+        'N° Venta': v.numero_venta,
+        'Fecha': formatDateTime(v.created_at),
+        'Cliente': v.cliente_nombre || 'Público General',
+        'Método Pago': v.metodo_pago.toUpperCase(),
+        'Subtotal': v.subtotal,
+        'Descuento': v.descuento,
+        'Total': v.total,
+        'Estado': v.estado.toUpperCase(),
+        'Vendedor': v.usuario_nombre || 'N/A'
+      }))
 
       const wb = XLSX.utils.book_new()
-      
-      const wsDetalle = XLSX.utils.json_to_sheet(datosExcel)
-      XLSX.utils.book_append_sheet(wb, wsDetalle, 'Detalle por Producto')
-      
-      const wsResumen = XLSX.utils.json_to_sheet(resumen)
-      XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen')
-
-      const fileName = `Ventas_Filtro.xlsx`
-      XLSX.writeFile(wb, fileName)
-      
+      const ws = XLSX.utils.json_to_sheet(ventasExport)
+      XLSX.utils.book_append_sheet(wb, ws, 'Ventas')
+      XLSX.writeFile(wb, `ventas-${new Date().getTime()}.xlsx`)
     } catch (err) {
       console.error('Error exportando:', err)
-      alert('Error al exportar el archivo')
     } finally {
       setExportando(false)
     }
   }
 
-  // 🔴 ANULAR VENTA (SOLO GERENTE)
+  // Anular venta
   const anularVenta = async () => {
-    if (!ventaSeleccionada || !usuario) return
-
-    // Validaciones
-    if (motivoAnulacion.trim().length < 10) {
-      alert('El motivo debe tener al menos 10 caracteres')
-      return
-    }
-
-    if (ventaSeleccionada.estado === 'anulada') {
-      alert('Esta venta ya fue anulada')
-      return
-    }
+    if (!ventaSeleccionada || !usuario?.id) return
+    if (motivoAnulacion.trim().length < 10) return
 
     setProcesandoAnulacion(true)
-
     try {
-      // 1. Actualizar estado de la venta
+      // 1. Marcar venta como anulada
       const { error: ventaError } = await supabase
         .from('ventas')
         .update({
           estado: 'anulada',
-          motivo_anulacion: motivoAnulacion,
+          motivo_anulacion: motivoAnulacion.trim(),
           anulada_por: usuario.id,
           anulada_at: new Date().toISOString()
         })
@@ -350,25 +316,23 @@ switch (filtroFecha) {
 
       if (ventaError) throw ventaError
 
-      // 2. Devolver stock a productos (por cada detalle)
+      // 2. Devolver stock de productos
       for (const detalle of ventaSeleccionada.detalles) {
-        // Buscar el producto por código
-        const { data: productoData } = await supabase
+        const { data: producto } = await supabase
           .from('productos')
-          .select('id, stock_actual')
-          .eq('codigo', detalle.producto_codigo)
-          .eq('sucursal_id', usuario.sucursal_id)
+          .select('stock_actual')
+          .eq('id', detalle.id)
           .single()
 
-        if (productoData) {
+        if (producto) {
           await supabase
             .from('productos')
-            .update({ stock_actual: productoData.stock_actual + detalle.cantidad })
-            .eq('id', productoData.id)
+            .update({ stock_actual: producto.stock_actual + detalle.cantidad })
+            .eq('id', detalle.id)
         }
       }
 
-      // 3. Crear movimientos inversos en caja (egresos)
+      // 3. Crear movimientos inversos en caja
       if (ventaSeleccionada.monto_efectivo > 0) {
         await supabase.from('movimientos_caja').insert({
           caja_id: ventaSeleccionada.caja_id,
@@ -393,30 +357,32 @@ switch (filtroFecha) {
         })
       }
 
-      // 4. Anular crédito si existe
-      if (ventaSeleccionada.cliente_id && ventaSeleccionada.monto_credito > 0) {
-        await supabase
-          .from('creditos')
-          .update({ estado: 'cancelado' })
-          .eq('venta_id', ventaSeleccionada.id)
-      }
+      // 4. Registrar en auditoría
+      await supabase.from('auditoria').insert({
+        usuario_id: usuario.id,
+        accion: 'anular_venta',
+        tabla: 'ventas',
+        registro_id: ventaSeleccionada.id,
+        datos_anteriores: { estado: 'completada' },
+        datos_nuevos: { 
+          estado: 'anulada', 
+          motivo: motivoAnulacion.trim(),
+          anulada_por: usuario.id 
+        }
+      })
 
-      // Éxito
+      // Cerrar modales y recargar
       setShowAnular(false)
+      setMotivoAnulacion('')
       setVentaSeleccionada(null)
       setShowExitoAnulacion(true)
-      setMotivoAnulacion('')
       
-      // Recargar ventas
       loadVentas()
 
-      // Ocultar mensaje después de 3 segundos
-      setTimeout(() => {
-        setShowExitoAnulacion(false)
-      }, 3000)
+      setTimeout(() => setShowExitoAnulacion(false), 3000)
 
-    } catch (error) {
-      console.error('Error anulando venta:', error)
+    } catch (err) {
+      console.error('Error anulando venta:', err)
       alert('Error al anular la venta')
     } finally {
       setProcesandoAnulacion(false)
@@ -435,94 +401,138 @@ switch (filtroFecha) {
   }
 
   return (
-    <div className="p-4 pb-24 max-w-4xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+    <div className="p-4 pb-24 max-w-6xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Historial de Ventas</h1>
-          <p className="text-gray-500 text-sm">{ventasFiltradas.length} ventas en el período</p>
+          <p className="text-gray-500 text-sm mt-1">Gestiona y consulta tus ventas</p>
         </div>
         <button
           onClick={exportarExcel}
           disabled={exportando || ventasFiltradas.length === 0}
-          className="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50 font-medium flex items-center gap-2"
+          className="px-4 py-2 bg-emerald-500 text-white rounded-xl hover:bg-emerald-600 disabled:opacity-50 flex items-center gap-2"
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          {exportando ? 'Exportando...' : 'Exportar Excel'}
+          {exportando ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              Exportando...
+            </>
+          ) : (
+            <>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Excel
+            </>
+          )}
         </button>
       </div>
 
+      {/* Filtros */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4 mb-4 space-y-4">
+        {/* Filtros de fecha predefinidos */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Período</label>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {(['hoy', 'semanal', 'mensual', 'personalizado'] as const).map(periodo => (
+              <button
+                key={periodo}
+                onClick={() => setFiltroFecha(periodo)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                  filtroFecha === periodo
+                    ? 'bg-emerald-500 text-white'
+                    : 'bg-gray-100 text-gray-600'
+                }`}
+              >
+                {periodo === 'hoy' && 'Hoy'}
+                {periodo === 'semanal' && 'Última Semana'}
+                {periodo === 'mensual' && 'Este Mes'}
+                {periodo === 'personalizado' && 'Personalizado'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Filtro personalizado con fechas */}
+        {filtroFecha === 'personalizado' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha inicio</label>
+              <input
+                type="date"
+                value={fechaInicio}
+                onChange={(e) => setFechaInicio(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Fecha fin</label>
+              <input
+                type="date"
+                value={fechaFin}
+                onChange={(e) => setFechaFin(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Filtro por método de pago */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Método de pago</label>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {['todos', 'efectivo', 'qr', 'credito', 'mixto'].map(metodo => (
+              <button
+                key={metodo}
+                onClick={() => setFiltroMetodo(metodo)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                  filtroMetodo === metodo
+                    ? 'bg-emerald-500 text-white'
+                    : 'bg-gray-100 text-gray-600'
+                }`}
+              >
+                {metodo === 'todos' ? 'Todos' : metodo.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Tarjetas de resumen */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-gray-500 text-sm">Total Ventas</p>
+          <p className="text-2xl font-bold text-gray-900">{totales.cantidad}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-gray-500 text-sm">💵 Efectivo</p>
+          <p className="text-2xl font-bold text-emerald-600">{formatCurrency(totales.efectivo)}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-gray-500 text-sm">📱 QR</p>
+          <p className="text-2xl font-bold text-blue-600">{formatCurrency(totales.qr)}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-gray-500 text-sm">💳 Crédito</p>
+          <p className="text-2xl font-bold text-amber-600">{formatCurrency(totales.credito)}</p>
+        </div>
+      </div>
+
+      {/* Mensaje de error */}
       {errorMsg && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {errorMsg}
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-4">
+          <p className="text-red-700 text-sm">{errorMsg}</p>
         </div>
       )}
 
-      {/* Filtros de fecha */}
-      <div className="flex gap-2 mb-4">
-        {(['hoy', 'semanal', 'mensual'] as const).map(filtro => (
-            <button
-            key={filtro}
-            onClick={() => setFiltroFecha(filtro)}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium ${
-                filtroFecha === filtro
-                ? 'bg-emerald-500 text-white'
-                : 'bg-gray-100 text-gray-600'
-            }`}
-            >
-            {filtro === 'hoy' ? '📅 Hoy' : filtro === 'semanal' ? '📆 Semanal' : '🗓️ Mensual'}
-            </button>
-        ))}
-        </div>
-
-      {/* Filtro de método de pago */}
-      <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
-        {['todos', 'efectivo', 'qr', 'credito', 'mixto'].map(metodo => (
-          <button
-            key={metodo}
-            onClick={() => setFiltroMetodo(metodo)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap flex items-center gap-1 ${
-              filtroMetodo === metodo
-                ? 'bg-emerald-500 text-white'
-                : 'bg-gray-100 text-gray-600'
-            }`}
-          >
-            {metodo !== 'todos' && getMetodoPagoIcon(metodo)}
-            <span className="capitalize">{metodo === 'todos' ? 'Todos' : getMetodoPagoText(metodo)}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* Resumen */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        <div className="bg-emerald-50 rounded-xl p-3 text-center">
-          <p className="text-emerald-600 font-bold text-lg">{formatCurrency(totalVentas)}</p>
-          <p className="text-emerald-700 text-xs">Total</p>
-        </div>
-        <div className="bg-blue-50 rounded-xl p-3 text-center">
-          <p className="text-blue-600 font-bold text-lg">{ventasCompletadas.length}</p>
-          <p className="text-blue-700 text-xs">Ventas</p>
-        </div>
-        <div className="bg-amber-50 rounded-xl p-3 text-center">
-          <p className="text-amber-600 font-bold text-lg">{formatCurrency(totalEfectivo)}</p>
-          <p className="text-amber-700 text-xs">💵 Efectivo</p>
-        </div>
-        <div className="bg-purple-50 rounded-xl p-3 text-center">
-          <p className="text-purple-600 font-bold text-lg">{formatCurrency(totalQR)}</p>
-          <p className="text-purple-700 text-xs">📱 QR</p>
-        </div>
-      </div>
-
+      {/* Lista de ventas */}
       {ventasFiltradas.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-          </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-1">No hay ventas</h3>
-          <p className="text-gray-500">No se encontraron ventas en este período</p>
+        <div className="bg-gray-50 rounded-xl p-12 text-center">
+          <svg className="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <p className="text-gray-500">No hay ventas en este período</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -530,45 +540,56 @@ switch (filtroFecha) {
             <div
               key={venta.id}
               onClick={() => setVentaSeleccionada(venta)}
-              className={`bg-white rounded-xl border p-4 cursor-pointer hover:shadow-md transition-shadow ${
-                venta.estado === 'anulada' ? 'border-red-200 bg-red-50/50' : 'border-gray-100'
+              className={`bg-white rounded-xl border p-4 cursor-pointer transition-all hover:shadow-md ${
+                venta.estado === 'anulada' 
+                  ? 'border-red-200 bg-red-50/50' 
+                  : 'border-gray-200 hover:border-emerald-200'
               }`}
             >
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-900">Venta {venta.numero_venta}</span>
-                    {venta.estado === 'anulada' && (
-                      <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">Anulada</span>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-3">
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                    venta.estado === 'anulada' ? 'bg-red-100' : 'bg-emerald-100'
+                  }`}>
+                    {venta.estado === 'anulada' ? (
+                      <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    ) : (
+                      <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
                     )}
                   </div>
-                  <p className="text-gray-500 text-sm">{formatDateTime(venta.created_at)}</p>
-                  {venta.cliente_nombre && (
-                    <p className="text-gray-400 text-xs mt-1">👤 {venta.cliente_nombre}</p>
-                  )}
-                  <p className="text-gray-400 text-xs">{venta.detalles.length} productos</p>
+                  <div>
+                    <h3 className="font-bold text-gray-900">Venta {venta.numero_venta}</h3>
+                    <p className="text-xs text-gray-500">{formatDateTime(venta.created_at)}</p>
+                  </div>
                 </div>
                 <div className="text-right">
-                  <p className={`font-bold text-lg ${venta.estado === 'anulada' ? 'text-red-600 line-through' : 'text-gray-900'}`}>
+                  <p className={`text-xl font-bold ${
+                    venta.estado === 'anulada' ? 'text-red-600 line-through' : 'text-emerald-600'
+                  }`}>
                     {formatCurrency(venta.total)}
                   </p>
-                  {venta.descuento > 0 && (
-                    <p className="text-xs text-red-500">
-                      -{formatCurrency(venta.descuento)} de descuento
-                    </p>
-                  )}
-                  <p className="text-sm mt-1">
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                      venta.metodo_pago === 'efectivo' ? 'bg-green-100 text-green-700' :
-                      venta.metodo_pago === 'qr' ? 'bg-purple-100 text-purple-700' :
-                      venta.metodo_pago === 'credito' ? 'bg-amber-100 text-amber-700' :
-                      'bg-blue-100 text-blue-700'
-                    }`}>
-                      {getMetodoPagoIcon(venta.metodo_pago)} {getMetodoPagoText(venta.metodo_pago)}
-                    </span>
-                  </p>
+                  <p className="text-xs text-gray-500 uppercase">{venta.metodo_pago}</p>
                 </div>
               </div>
+              
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-600">
+                  {venta.cliente_nombre || 'Público General'}
+                </span>
+                <span className="text-gray-400">
+                  {venta.detalles.length} {venta.detalles.length === 1 ? 'producto' : 'productos'}
+                </span>
+              </div>
+
+              {venta.estado === 'anulada' && (
+                <div className="mt-2 pt-2 border-t border-red-200">
+                  <p className="text-xs text-red-600 font-medium">⚠️ VENTA ANULADA</p>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -577,50 +598,51 @@ switch (filtroFecha) {
       {/* Modal de detalle de venta */}
       {ventaSeleccionada && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-100">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-xl font-bold text-gray-900">
-                    Venta {ventaSeleccionada.numero_venta}
-                  </h2>
-                  {ventaSeleccionada.estado === 'anulada' && (
-                    <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">Anulada</span>
-                  )}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                    ventaSeleccionada.estado === 'anulada' ? 'bg-red-100' : 'bg-emerald-100'
+                  }`}>
+                    {ventaSeleccionada.estado === 'anulada' ? (
+                      <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    ) : (
+                      <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    )}
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold text-gray-900">Venta {ventaSeleccionada.numero_venta}</h2>
+                    <p className="text-sm text-gray-500">{formatDateTime(ventaSeleccionada.created_at)}</p>
+                  </div>
                 </div>
                 <button
                   onClick={() => setVentaSeleccionada(null)}
-                  className="text-gray-400 hover:text-gray-600"
+                  className="p-2 hover:bg-gray-100 rounded-lg"
                 >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
               </div>
-            </div>
-            
-            <div className="p-6 space-y-4">
-              {/* Info general */}
-              <div className="grid grid-cols-2 gap-3 text-sm">
+
+              {/* Información general */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-gray-500">Fecha</span>
-                  <p className="font-medium">{formatDateTime(ventaSeleccionada.created_at)}</p>
+                  <span className="text-gray-500">Cliente</span>
+                  <p className="font-medium">{ventaSeleccionada.cliente_nombre || 'Público General'}</p>
+                  {ventaSeleccionada.cliente_telefono && (
+                    <p className="text-xs text-gray-400">{ventaSeleccionada.cliente_telefono}</p>
+                  )}
                 </div>
                 <div>
                   <span className="text-gray-500">Método de pago</span>
-                  <p className="font-medium">
-                    {getMetodoPagoIcon(ventaSeleccionada.metodo_pago)} {getMetodoPagoText(ventaSeleccionada.metodo_pago)}
-                  </p>
+                  <p className="font-medium uppercase">{ventaSeleccionada.metodo_pago}</p>
                 </div>
-                {ventaSeleccionada.cliente_nombre && (
-                  <div>
-                    <span className="text-gray-500">Cliente</span>
-                    <p className="font-medium">{ventaSeleccionada.cliente_nombre}</p>
-                    {ventaSeleccionada.cliente_telefono && (
-                      <p className="text-xs text-gray-400">{ventaSeleccionada.cliente_telefono}</p>
-                    )}
-                  </div>
-                )}
                 {ventaSeleccionada.usuario_nombre && (
                   <div>
                     <span className="text-gray-500">Vendedor</span>
@@ -631,7 +653,7 @@ switch (filtroFecha) {
 
               {/* Desglose de pago para mixto */}
               {ventaSeleccionada.metodo_pago === 'mixto' && (
-                <div className="p-3 bg-gray-50 rounded-lg text-sm">
+                <div className="p-3 bg-gray-50 rounded-lg text-sm mt-4">
                   <p className="font-medium text-gray-700 mb-2">Desglose de pago:</p>
                   <div className="flex justify-between">
                     <span>💵 Efectivo:</span>
@@ -643,32 +665,89 @@ switch (filtroFecha) {
                   </div>
                 </div>
               )}
+            </div>
 
-              {/* Productos */}
-              <div className="border-t border-gray-100 pt-4">
-                <h3 className="font-medium text-gray-900 mb-3">Productos ({ventaSeleccionada.detalles.length})</h3>
-                <div className="space-y-3">
-                  {ventaSeleccionada.detalles.map((detalle) => (
-                    <div key={detalle.id} className="flex justify-between items-start p-3 bg-gray-50 rounded-lg">
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-900">{detalle.producto_nombre}</p>
-                        <p className="text-xs text-gray-500">
-                          {detalle.cantidad} x {formatCurrency(detalle.precio_unitario)}
-                          {detalle.precio_unitario !== detalle.precio_original && (
-                            <span className="ml-2 text-amber-600">
-                              (Original: {formatCurrency(detalle.precio_original)})
-                            </span>
-                          )}
-                        </p>
+            {/* Productos */}
+            <div className="p-6">
+              <h3 className="font-medium text-gray-900 mb-3">Productos ({ventaSeleccionada.detalles.length})</h3>
+              <div className="space-y-3">
+                {ventaSeleccionada.detalles.map((detalle) => (
+                  <div key={detalle.id} className="flex justify-between items-start p-3 bg-gray-50 rounded-lg">
+                    <div className="flex-1">
+                      <p className="font-medium text-gray-900">{detalle.producto_nombre}</p>
+                      <div className="text-xs text-gray-500 mt-1 space-y-1">
+                        {/* Determinar qué se hizo: precio editado, descuento, o ambos */}
+                        {(() => {
+                          const precioEditado = detalle.precio_unitario !== detalle.precio_original
+                          const tieneDescuento = detalle.descuento_monto > 0
+                          
+                          if (precioEditado && !tieneDescuento) {
+                            // Solo se editó el precio
+                            return (
+                              <p>
+                                {detalle.cantidad} unidad{detalle.cantidad !== 1 ? 'es' : ''} 
+                                <span className="ml-2">
+                                  📝 <span className="text-amber-600 font-medium">Precio editado:</span>
+                                  <span className="line-through text-gray-400 ml-1">
+                                    {formatCurrency(detalle.precio_original)}
+                                  </span>
+                                  <span className="text-amber-600 font-medium ml-1">
+                                    → {formatCurrency(detalle.precio_unitario)} c/u
+                                  </span>
+                                </span>
+                              </p>
+                            )
+                          } else if (tieneDescuento && !precioEditado) {
+                            // Solo se aplicó descuento
+                            return (
+                              <>
+                                <p>
+                                  {detalle.cantidad} unidad{detalle.cantidad !== 1 ? 'es' : ''} × {formatCurrency(detalle.precio_original)} c/u
+                                </p>
+                                <p className="text-red-600 font-medium">
+                                  🏷️ Descuento: -{formatCurrency(detalle.descuento_monto)} total
+                                </p>
+                              </>
+                            )
+                          } else if (tieneDescuento && precioEditado) {
+                            // Se editó precio Y se aplicó descuento
+                            return (
+                              <>
+                                <p>
+                                  {detalle.cantidad} unidad{detalle.cantidad !== 1 ? 'es' : ''}
+                                  <span className="ml-2">
+                                    📝 <span className="text-amber-600 font-medium">Precio editado:</span>
+                                    <span className="line-through text-gray-400 ml-1">
+                                      {formatCurrency(detalle.precio_original)}
+                                    </span>
+                                    <span className="text-amber-600 font-medium ml-1">
+                                      → {formatCurrency(detalle.precio_unitario)} c/u
+                                    </span>
+                                  </span>
+                                </p>
+                                <p className="text-red-600 font-medium">
+                                  🏷️ Descuento adicional: -{formatCurrency(detalle.descuento_monto)} total
+                                </p>
+                              </>
+                            )
+                          } else {
+                            // No se editó nada, precio normal
+                            return (
+                              <p>
+                                {detalle.cantidad} unidad{detalle.cantidad !== 1 ? 'es' : ''} × {formatCurrency(detalle.precio_unitario)} c/u
+                              </p>
+                            )
+                          }
+                        })()}
                       </div>
-                      <p className="font-medium text-gray-900">{formatCurrency(detalle.subtotal)}</p>
                     </div>
-                  ))}
-                </div>
+                    <p className="font-medium text-gray-900">{formatCurrency(detalle.subtotal)}</p>
+                  </div>
+                ))}
               </div>
 
               {/* Totales */}
-              <div className="border-t border-gray-100 pt-4 space-y-2">
+              <div className="border-t border-gray-100 mt-4 pt-4 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-500">Subtotal</span>
                   <span>{formatCurrency(ventaSeleccionada.subtotal)}</span>
@@ -689,7 +768,7 @@ switch (filtroFecha) {
 
               {/* Notas */}
               {ventaSeleccionada.notas && (
-                <div className="p-3 bg-amber-50 rounded-lg">
+                <div className="p-3 bg-amber-50 rounded-lg mt-4">
                   <p className="text-sm text-amber-700">
                     <strong>Notas:</strong> {ventaSeleccionada.notas}
                   </p>
@@ -698,7 +777,7 @@ switch (filtroFecha) {
 
               {/* Mensaje venta anulada con motivo */}
               {ventaSeleccionada.estado === 'anulada' && (
-                <div className="p-4 bg-red-50 rounded-lg border border-red-200">
+                <div className="p-4 bg-red-50 rounded-lg border border-red-200 mt-4">
                   <p className="text-red-700 text-sm font-bold mb-2">⚠️ Esta venta fue anulada</p>
                   {ventaSeleccionada.motivo_anulacion && (
                     <p className="text-red-600 text-sm">
@@ -810,6 +889,17 @@ switch (filtroFecha) {
           </div>
         </div>
       )}
+
+      <style jsx>{`
+        @keyframes bounce-in {
+          0% { transform: scale(0.5); opacity: 0; }
+          50% { transform: scale(1.05); }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-bounce-in {
+          animation: bounce-in 0.4s ease-out;
+        }
+      `}</style>
     </div>
   )
 }
