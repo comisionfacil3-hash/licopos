@@ -165,6 +165,24 @@ export default function ReportesPage() {
                   Identifica productos sin ventas por períodos prolongados
                 </p>
               </button>
+              {/* Kardex de Producto - NUEVO */}
+              <button
+                onClick={() => router.push('/dashboard/reportes/inventario/kardex')}
+                className="bg-white rounded-xl p-5 border border-gray-200 hover:border-purple-500 hover:shadow-lg transition-all text-left group"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center group-hover:bg-purple-500 transition-colors">
+                    <Package className="w-6 h-6 text-purple-600 group-hover:text-white" />
+                  </div>
+                  <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-semibold rounded-full">
+                    Nuevo
+                  </span>
+                </div>
+                <h3 className="font-bold text-gray-900 mb-1">Kardex de Producto</h3>
+                <p className="text-sm text-gray-600">
+                  Historial completo de movimientos: compras, ventas, traspasos
+                </p>
+              </button>
             </div>
           </div>
         ) : (
