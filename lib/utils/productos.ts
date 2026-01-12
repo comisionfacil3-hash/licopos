@@ -1,6 +1,6 @@
 // Path: lib\utils\productos.ts
 // lib/utils/productos.ts
-// LICOPOS v2.1 - Utilidades para productos
+// ControlaPos v2.1 - Utilidades para productos
 // COMPLETO con todas las funciones requeridas
 
 import { Producto, StockStatus } from '@/types/database'

@@ -1,5 +1,5 @@
 // =====================================================
-// RUTAS DEL SISTEMA LICOPOS v2.1
+// RUTAS DEL SISTEMA ControlaPos v2.1
 // =====================================================
 
 // Rutas públicas (sin autenticación)

@@ -301,36 +301,48 @@ export default function InventarioPage() {
   }
 
   const actualizarConteo = async (detalleId: string, stockContado: number | null) => {
+    // Obtener el detalle actual para calcular diferencia
+    const detalleActual = detalles.find(d => d.id === detalleId)
+    if (!detalleActual) return
+
+    // Calcular diferencia y costo
+    const diferencia = stockContado !== null ? stockContado - detalleActual.stock_sistema : 0
+    const costoDiferencia = diferencia * detalleActual.costo_unitario
+
     // 1. Actualizar estado local INMEDIATAMENTE (optimistic update)
     setDetalles(prev => prev.map(d => {
       if (d.id !== detalleId) return d
       
-      const nuevoStockContado = stockContado
-      const diferencia = nuevoStockContado !== null 
-        ? nuevoStockContado - d.stock_sistema 
-        : 0
-      const costoDiferencia = diferencia * d.costo_unitario
-      
       return {
         ...d,
-        stock_contado: nuevoStockContado,
-        contado: nuevoStockContado !== null,
+        stock_contado: stockContado,
+        contado: stockContado !== null,
         diferencia,
         costo_diferencia: costoDiferencia
       }
     }))
 
-    // 2. Actualizar en base de datos en segundo plano
+    // 2. Actualizar en base de datos en segundo plano CON diferencia y costo_diferencia
     if (stockContado === null) {
       supabase
         .from('inventario_detalles')
-        .update({ stock_contado: null, contado: false })
+        .update({ 
+          stock_contado: null, 
+          contado: false,
+          diferencia: 0,
+          costo_diferencia: 0
+        })
         .eq('id', detalleId)
         .then()
     } else {
       supabase
         .from('inventario_detalles')
-        .update({ stock_contado: stockContado, contado: true })
+        .update({ 
+          stock_contado: stockContado, 
+          contado: true,
+          diferencia: diferencia,
+          costo_diferencia: costoDiferencia
+        })
         .eq('id', detalleId)
         .then()
     }

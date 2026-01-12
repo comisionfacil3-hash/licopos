@@ -1,4 +1,4 @@
-// Script de verificación PWA para LicoPOS
+// Script de verificación PWA para ControlaPos
 // Ejecutar: node check-pwa.js
 
 const fs = require('fs');
@@ -30,7 +30,7 @@ const iconPath = path.join(__dirname, 'public', 'icons');
 
 if (!fs.existsSync(iconPath)) {
   console.log('   ❌ Carpeta public/icons/ NO existe');
-  console.log('   💡 Solución: Descarga licopos-iconos.zip y copia la carpeta icons/ a public/');
+  console.log('   💡 Solución: Descarga ControlaPos-iconos.zip y copia la carpeta icons/ a public/');
   errores++;
 } else {
   let iconosFaltantes = 0;

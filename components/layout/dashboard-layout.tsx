@@ -200,7 +200,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
               </svg>
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-gray-900">LicoPos</h1>
+              <h1 className="text-lg font-semibold text-gray-900">ControlaPos</h1>
               <p className="text-xs text-gray-500">{sucursalNombre}</p>
             </div>
           </div>

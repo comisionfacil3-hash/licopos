@@ -1,6 +1,6 @@
 // Path: lib\hooks\use-caja.ts
 // lib/hooks/use-caja.ts
-// LICOPOS v2.1 - Hook para Gestión de Caja
+// ControlaPos v2.1 - Hook para Gestión de Caja
 // Maneja apertura, cierre y estado de caja
 
 'use client'

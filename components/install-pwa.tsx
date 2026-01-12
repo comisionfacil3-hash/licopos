@@ -87,7 +87,7 @@ export default function InstallPWA() {
           
           <div className="flex-1">
             <h3 className="font-semibold text-gray-900 mb-1">
-              ¿Instalar LicoPOS?
+              ¿Instalar ControlaPos?
             </h3>
             <p className="text-sm text-gray-600 mb-3">
               Accede más rápido desde tu pantalla de inicio

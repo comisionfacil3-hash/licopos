@@ -22,7 +22,7 @@ const sizes = [
 ];
 
 async function generateIcons() {
-  console.log('🎨 Generando TODOS los iconos para LicoPOS...\n');
+  console.log('🎨 Generando TODOS los iconos para ControlaPos...\n');
   console.log(`📋 Total de iconos a generar: ${sizes.length}\n`);
 
   // Verificar si existe el SVG

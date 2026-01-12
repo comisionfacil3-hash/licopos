@@ -3,8 +3,8 @@
 
 $manifestContent = @'
 {
-  "name": "LicoPos - Sistema de Gestión para Licorerías",
-  "short_name": "LicoPos",
+  "name": "ControlaPos - Sistema de Gestión para Licorerías",
+  "short_name": "ControlaPos",
   "description": "Sistema integral para gestión de licorerías multi-empresa",
   "start_url": "/",
   "display": "standalone",

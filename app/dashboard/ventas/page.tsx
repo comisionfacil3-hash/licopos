@@ -77,7 +77,8 @@ export default function VentasPage() {
   const loadVentas = async () => {
     if (!usuario?.sucursal_id) return
 
-    setLoading(true)
+    // ✅ FIX 1: Solo mostrar loading si no hay datos previos
+    setLoading(ventas.length === 0)
     setErrorMsg(null)
     
     try {
@@ -101,10 +102,12 @@ switch (filtroFecha) {
     break
   case 'personalizado':
     if (fechaInicio && fechaFin) {
-      fechaInicioCalc = new Date(fechaInicio)
-      fechaInicioCalc.setHours(0, 0, 0, 0)
-      fechaFinCalc = new Date(fechaFin)
-      fechaFinCalc.setHours(23, 59, 59, 999)
+      // ✅ FIX 3: Parsear fechas correctamente para zona horaria local
+      const [yearInicio, monthInicio, dayInicio] = fechaInicio.split('-').map(Number)
+      fechaInicioCalc = new Date(yearInicio, monthInicio - 1, dayInicio, 0, 0, 0, 0)
+      
+      const [yearFin, monthFin, dayFin] = fechaFin.split('-').map(Number)
+      fechaFinCalc = new Date(yearFin, monthFin - 1, dayFin, 23, 59, 59, 999)
     } else {
       // Si no hay fechas, usar hoy
       fechaInicioCalc = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate())
@@ -125,11 +128,13 @@ switch (filtroFecha) {
         console.error('Error cargando ventas:', ventasError)
         setErrorMsg(`Error: ${ventasError.message}`)
         setVentas([])
+        setLoading(false)
         return
       }
 
       if (!ventasData || ventasData.length === 0) {
         setVentas([])
+        setLoading(false)
         return
       }
 
@@ -195,28 +200,29 @@ switch (filtroFecha) {
 
       // 7. Armar objeto final de ventas
       const ventasCompletas: Venta[] = ventasData.map(venta => {
-        // Filtrar detalles de esta venta
-        const detallesVenta = (detallesData || [])
-          .filter(d => d.venta_id === venta.id)
-          .map(d => ({
-            id: d.id,
-            cantidad: d.cantidad,
-            precio_unitario: d.precio_unitario,
-            precio_original: d.precio_original || d.precio_unitario,
-            descuento_monto: d.descuento_monto || 0,
-            precio_final: d.precio_final || d.precio_unitario,
-            subtotal: d.subtotal,
-            producto_nombre: productosMap[d.producto_id]?.nombre || 'Producto eliminado',
-            producto_codigo: productosMap[d.producto_id]?.codigo || 'N/A',
-            costo_unitario: productosMap[d.producto_id]?.precio_compra || 0
-          }))
+        const cliente = venta.cliente_id ? clientesMap[venta.cliente_id] : null
+        const detallesVenta = detallesData?.filter(d => d.venta_id === venta.id).map(detalle => {
+          const producto = productosMap[detalle.producto_id] || { nombre: 'Producto Eliminado', codigo: 'N/A', precio_compra: 0 }
+          return {
+            id: detalle.id,
+            cantidad: detalle.cantidad,
+            precio_unitario: detalle.precio_unitario,
+            precio_original: detalle.precio_original || detalle.precio_unitario,
+            descuento_monto: detalle.descuento_monto || 0,
+            precio_final: detalle.precio_final || detalle.precio_unitario,
+            subtotal: detalle.subtotal,
+            producto_nombre: producto.nombre,
+            producto_codigo: producto.codigo,
+            costo_unitario: producto.precio_compra
+          }
+        }) || []
 
         return {
           id: venta.id,
           numero_venta: venta.numero_venta,
           total: venta.total,
           subtotal: venta.subtotal,
-          descuento: venta.descuento,
+          descuento: venta.descuento || 0,
           metodo_pago: venta.metodo_pago,
           monto_efectivo: venta.monto_efectivo || 0,
           monto_qr: venta.monto_qr || 0,
@@ -227,9 +233,9 @@ switch (filtroFecha) {
           anulada_por: venta.anulada_por,
           anulada_at: venta.anulada_at,
           created_at: venta.created_at,
-          cliente_nombre: venta.cliente_id ? clientesMap[venta.cliente_id]?.nombre || null : null,
-          cliente_telefono: venta.cliente_id ? clientesMap[venta.cliente_id]?.telefono || null : null,
-          usuario_nombre: venta.usuario_id ? usuariosMap[venta.usuario_id] || null : null,
+          cliente_nombre: cliente?.nombre || null,
+          cliente_telefono: cliente?.telefono || null,
+          usuario_nombre: usuariosMap[venta.usuario_id] || 'Usuario Eliminado',
           caja_id: venta.caja_id,
           cliente_id: venta.cliente_id,
           detalles: detallesVenta
@@ -237,163 +243,136 @@ switch (filtroFecha) {
       })
 
       setVentas(ventasCompletas)
-    } catch (err) {
-      console.error('Error cargando ventas:', err)
-      setErrorMsg('Error al cargar las ventas')
-      setVentas([])
+    } catch (error) {
+      console.error('Error inesperado:', error)
+      setErrorMsg('Error inesperado al cargar ventas')
     } finally {
       setLoading(false)
     }
   }
 
-  // Filtrar ventas
+  // Filtrar ventas por método de pago
   const ventasFiltradas = useMemo(() => {
-    let resultado = [...ventas]
-
-    if (filtroMetodo !== 'todos') {
-      resultado = resultado.filter(v => v.metodo_pago === filtroMetodo)
-    }
-
-    return resultado
+    if (filtroMetodo === 'todos') return ventas
+    return ventas.filter(v => v.metodo_pago === filtroMetodo)
   }, [ventas, filtroMetodo])
 
   // Calcular totales
   const totales = useMemo(() => {
-    const ventasActivas = ventasFiltradas.filter(v => v.estado !== 'anulada')
+    const efectivo = ventasFiltradas.reduce((sum, v) => v.estado !== 'anulada' ? sum + v.monto_efectivo : sum, 0)
+    const qr = ventasFiltradas.reduce((sum, v) => v.estado !== 'anulada' ? sum + v.monto_qr : sum, 0)
+    const credito = ventasFiltradas.reduce((sum, v) => v.estado !== 'anulada' ? sum + v.monto_credito : sum, 0)
+    
     return {
-      cantidad: ventasActivas.length,
-      total: ventasActivas.reduce((sum, v) => sum + v.total, 0),
-      efectivo: ventasActivas.reduce((sum, v) => sum + v.monto_efectivo, 0),
-      qr: ventasActivas.reduce((sum, v) => sum + v.monto_qr, 0),
-      credito: ventasActivas.reduce((sum, v) => sum + v.monto_credito, 0)
+      cantidad: ventasFiltradas.filter(v => v.estado !== 'anulada').length,
+      efectivo,
+      qr,
+      credito,
+      total: efectivo + qr + credito
     }
   }, [ventasFiltradas])
 
-  // Exportar a Excel
-  const exportarExcel = async () => {
-    setExportando(true)
-    try {
-      const ventasExport = ventasFiltradas.map(v => ({
-        'N° Venta': v.numero_venta,
-        'Fecha': formatDateTime(v.created_at),
-        'Cliente': v.cliente_nombre || 'Público General',
-        'Método Pago': v.metodo_pago.toUpperCase(),
-        'Subtotal': v.subtotal,
-        'Descuento': v.descuento,
-        'Total': v.total,
-        'Estado': v.estado.toUpperCase(),
-        'Vendedor': v.usuario_nombre || 'N/A'
-      }))
-
-      const wb = XLSX.utils.book_new()
-      const ws = XLSX.utils.json_to_sheet(ventasExport)
-      XLSX.utils.book_append_sheet(wb, ws, 'Ventas')
-      XLSX.writeFile(wb, `ventas-${new Date().getTime()}.xlsx`)
-    } catch (err) {
-      console.error('Error exportando:', err)
-    } finally {
-      setExportando(false)
-    }
-  }
-
-  // Anular venta
   const anularVenta = async () => {
-    if (!ventaSeleccionada || !usuario?.id) return
-    if (motivoAnulacion.trim().length < 10) return
+    if (!ventaSeleccionada || !usuario) return
+    if (motivoAnulacion.trim().length < 10) {
+      alert('El motivo debe tener al menos 10 caracteres')
+      return
+    }
 
     setProcesandoAnulacion(true)
+    
     try {
-      // 1. Marcar venta como anulada
-      const { error: ventaError } = await supabase
-        .from('ventas')
-        .update({
-          estado: 'anulada',
-          motivo_anulacion: motivoAnulacion.trim(),
-          anulada_por: usuario.id,
-          anulada_at: new Date().toISOString()
-        })
-        .eq('id', ventaSeleccionada.id)
-
-      if (ventaError) throw ventaError
-
-      // 2. Devolver stock de productos
-      for (const detalle of ventaSeleccionada.detalles) {
-        const { data: producto } = await supabase
-          .from('productos')
-          .select('stock_actual')
-          .eq('id', detalle.id)
-          .single()
-
-        if (producto) {
-          await supabase
-            .from('productos')
-            .update({ stock_actual: producto.stock_actual + detalle.cantidad })
-            .eq('id', detalle.id)
-        }
-      }
-
-      // 3. Crear movimientos inversos en caja
-      if (ventaSeleccionada.monto_efectivo > 0) {
-        await supabase.from('movimientos_caja').insert({
-          caja_id: ventaSeleccionada.caja_id,
-          tipo: 'egreso',
-          concepto: `Anulación Venta ${ventaSeleccionada.numero_venta}`,
-          referencia_id: ventaSeleccionada.id,
-          referencia_tipo: 'anulacion_venta',
-          monto: ventaSeleccionada.monto_efectivo,
-          metodo_pago: 'efectivo'
-        })
-      }
-
-      if (ventaSeleccionada.monto_qr > 0) {
-        await supabase.from('movimientos_caja').insert({
-          caja_id: ventaSeleccionada.caja_id,
-          tipo: 'egreso',
-          concepto: `Anulación Venta ${ventaSeleccionada.numero_venta}`,
-          referencia_id: ventaSeleccionada.id,
-          referencia_tipo: 'anulacion_venta',
-          monto: ventaSeleccionada.monto_qr,
-          metodo_pago: 'qr'
-        })
-      }
-
-      // 4. Registrar en auditoría
-      await supabase.from('auditoria').insert({
-        usuario_id: usuario.id,
-        accion: 'anular_venta',
-        tabla: 'ventas',
-        registro_id: ventaSeleccionada.id,
-        datos_anteriores: { estado: 'completada' },
-        datos_nuevos: { 
-          estado: 'anulada', 
-          motivo: motivoAnulacion.trim(),
-          anulada_por: usuario.id 
-        }
+      const { error } = await supabase.rpc('anular_venta', {
+        p_venta_id: ventaSeleccionada.id,
+        p_motivo: motivoAnulacion.trim(),
+        p_usuario_id: usuario.id
       })
 
-      // Cerrar modales y recargar
+      if (error) throw error
+
+      // Mostrar modal de éxito
       setShowAnular(false)
-      setMotivoAnulacion('')
-      setVentaSeleccionada(null)
       setShowExitoAnulacion(true)
       
-      loadVentas()
+      // Cerrar modal de éxito y recargar después de 2 segundos
+      setTimeout(() => {
+        setShowExitoAnulacion(false)
+        setVentaSeleccionada(null)
+        setMotivoAnulacion('')
+        loadVentas()
+      }, 2000)
 
-      setTimeout(() => setShowExitoAnulacion(false), 3000)
-
-    } catch (err) {
-      console.error('Error anulando venta:', err)
-      alert('Error al anular la venta')
+    } catch (error: any) {
+      console.error('Error anulando venta:', error)
+      alert(`Error al anular venta: ${error.message}`)
     } finally {
       setProcesandoAnulacion(false)
     }
   }
 
+  const exportarExcel = async () => {
+    if (ventasFiltradas.length === 0) {
+      alert('No hay ventas para exportar')
+      return
+    }
+
+    setExportando(true)
+
+    try {
+      // Preparar datos para Excel
+      const datosExcel = ventasFiltradas.map(venta => ({
+        'Número': venta.numero_venta,
+        'Fecha': formatDateTime(venta.created_at),
+        'Cliente': venta.cliente_nombre || 'N/A',
+        'Total': venta.total,
+        'Método': venta.metodo_pago.toUpperCase(),
+        'Efectivo': venta.monto_efectivo,
+        'QR': venta.monto_qr,
+        'Crédito': venta.monto_credito,
+        'Estado': venta.estado.toUpperCase(),
+        'Vendedor': venta.usuario_nombre,
+        'Productos': venta.detalles.length
+      }))
+
+      // Crear libro y hoja
+      const wb = XLSX.utils.book_new()
+      const ws = XLSX.utils.json_to_sheet(datosExcel)
+
+      // Ajustar anchos de columna
+      ws['!cols'] = [
+        { wch: 8 },  // Número
+        { wch: 18 }, // Fecha
+        { wch: 20 }, // Cliente
+        { wch: 12 }, // Total
+        { wch: 10 }, // Método
+        { wch: 12 }, // Efectivo
+        { wch: 12 }, // QR
+        { wch: 12 }, // Crédito
+        { wch: 10 }, // Estado
+        { wch: 15 }, // Vendedor
+        { wch: 10 }  // Productos
+      ]
+
+      XLSX.utils.book_append_sheet(wb, ws, 'Ventas')
+
+      // Descargar archivo
+      const fecha = new Date().toISOString().split('T')[0]
+      XLSX.writeFile(wb, `ventas_${fecha}.xlsx`)
+
+      alert('Excel exportado correctamente')
+    } catch (error) {
+      console.error('Error exportando Excel:', error)
+      alert('Error al exportar Excel')
+    } finally {
+      setExportando(false)
+    }
+  }
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
+      <div className="flex items-center justify-center h-screen">
         <div className="text-center">
-          <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <div className="w-16 h-16 border-4 border-emerald-200 border-t-emerald-500 rounded-full animate-spin mx-auto mb-4"></div>
           <p className="text-gray-500">Cargando ventas...</p>
         </div>
       </div>
@@ -576,11 +555,14 @@ switch (filtroFecha) {
                 </div>
               </div>
               
+              {/* ✅ FIX 2: Solo mostrar cliente si existe, sin "Público General" */}
               <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-600">
-                  {venta.cliente_nombre || 'Público General'}
-                </span>
-                <span className="text-gray-400">
+                {venta.cliente_nombre && (
+                  <span className="text-gray-600">
+                    {venta.cliente_nombre}
+                  </span>
+                )}
+                <span className={`text-gray-400 ${venta.cliente_nombre ? '' : 'ml-auto'}`}>
                   {venta.detalles.length} {venta.detalles.length === 1 ? 'producto' : 'productos'}
                 </span>
               </div>
@@ -598,94 +580,101 @@ switch (filtroFecha) {
       {/* Modal de detalle de venta */}
       {ventaSeleccionada && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Header del modal */}
             <div className="p-6 border-b border-gray-100">
               <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                    ventaSeleccionada.estado === 'anulada' ? 'bg-red-100' : 'bg-emerald-100'
-                  }`}>
-                    {ventaSeleccionada.estado === 'anulada' ? (
-                      <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    ) : (
-                      <svg className="w-6 h-6 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    )}
-                  </div>
-                  <div>
-                    <h2 className="text-2xl font-bold text-gray-900">Venta {ventaSeleccionada.numero_venta}</h2>
-                    <p className="text-sm text-gray-500">{formatDateTime(ventaSeleccionada.created_at)}</p>
-                  </div>
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">Venta {ventaSeleccionada.numero_venta}</h2>
+                  <p className="text-sm text-gray-500 mt-1">{formatDateTime(ventaSeleccionada.created_at)}</p>
                 </div>
-                <button
-                  onClick={() => setVentaSeleccionada(null)}
-                  className="p-2 hover:bg-gray-100 rounded-lg"
-                >
-                  <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+                <div className={`px-4 py-2 rounded-full text-sm font-medium ${
+                  ventaSeleccionada.estado === 'anulada'
+                    ? 'bg-red-100 text-red-700'
+                    : 'bg-emerald-100 text-emerald-700'
+                }`}>
+                  {ventaSeleccionada.estado === 'anulada' ? '❌ ANULADA' : '✓ Completada'}
+                </div>
               </div>
 
-              {/* Información general */}
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-gray-500">Cliente</span>
-                  <p className="font-medium">{ventaSeleccionada.cliente_nombre || 'Público General'}</p>
+              {/* Info del cliente */}
+              {ventaSeleccionada.cliente_nombre && (
+                <div className="p-3 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-600">
+                    <strong>Cliente:</strong> {ventaSeleccionada.cliente_nombre}
+                  </p>
                   {ventaSeleccionada.cliente_telefono && (
-                    <p className="text-xs text-gray-400">{ventaSeleccionada.cliente_telefono}</p>
+                    <p className="text-sm text-gray-600">
+                      <strong>Teléfono:</strong> {ventaSeleccionada.cliente_telefono}
+                    </p>
                   )}
                 </div>
-                <div>
-                  <span className="text-gray-500">Método de pago</span>
-                  <p className="font-medium uppercase">{ventaSeleccionada.metodo_pago}</p>
-                </div>
-                {ventaSeleccionada.usuario_nombre && (
-                  <div>
-                    <span className="text-gray-500">Vendedor</span>
-                    <p className="font-medium">{ventaSeleccionada.usuario_nombre}</p>
+              )}
+
+              {/* Método de pago */}
+              <div className="mt-3 p-3 bg-blue-50 rounded-lg">
+                <p className="text-sm text-blue-700">
+                  <strong>Método de pago:</strong> {ventaSeleccionada.metodo_pago.toUpperCase()}
+                </p>
+                {ventaSeleccionada.metodo_pago === 'mixto' && (
+                  <div className="mt-2 space-y-1 text-sm text-blue-600">
+                    {ventaSeleccionada.monto_efectivo > 0 && (
+                      <p>💵 Efectivo: {formatCurrency(ventaSeleccionada.monto_efectivo)}</p>
+                    )}
+                    {ventaSeleccionada.monto_qr > 0 && (
+                      <p>📱 QR: {formatCurrency(ventaSeleccionada.monto_qr)}</p>
+                    )}
+                    {ventaSeleccionada.monto_credito > 0 && (
+                      <p>💳 Crédito: {formatCurrency(ventaSeleccionada.monto_credito)}</p>
+                    )}
                   </div>
                 )}
               </div>
 
-              {/* Desglose de pago para mixto */}
-              {ventaSeleccionada.metodo_pago === 'mixto' && (
-                <div className="p-3 bg-gray-50 rounded-lg text-sm mt-4">
-                  <p className="font-medium text-gray-700 mb-2">Desglose de pago:</p>
-                  <div className="flex justify-between">
-                    <span>💵 Efectivo:</span>
-                    <span>{formatCurrency(ventaSeleccionada.monto_efectivo)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>📱 QR:</span>
-                    <span>{formatCurrency(ventaSeleccionada.monto_qr)}</span>
-                  </div>
-                </div>
-              )}
+              {/* Vendedor */}
+              <div className="mt-3 text-sm text-gray-600">
+                <strong>Vendedor:</strong> {ventaSeleccionada.usuario_nombre}
+              </div>
             </div>
 
             {/* Productos */}
-            <div className="p-6">
-              <h3 className="font-medium text-gray-900 mb-3">Productos ({ventaSeleccionada.detalles.length})</h3>
+            <div className="flex-1 overflow-y-auto p-6">
+              <h3 className="font-semibold text-gray-900 mb-3">Productos</h3>
               <div className="space-y-3">
                 {ventaSeleccionada.detalles.map((detalle) => (
-                  <div key={detalle.id} className="flex justify-between items-start p-3 bg-gray-50 rounded-lg">
+                  <div key={detalle.id} className="flex items-start justify-between pb-3 border-b border-gray-100">
                     <div className="flex-1">
                       <p className="font-medium text-gray-900">{detalle.producto_nombre}</p>
-                      <div className="text-xs text-gray-500 mt-1 space-y-1">
-                        {/* Determinar qué se hizo: precio editado, descuento, o ambos */}
+                      <p className="text-xs text-gray-400">Código: {detalle.producto_codigo}</p>
+                      <div className="mt-1 text-sm text-gray-600">
                         {(() => {
-                          const precioEditado = detalle.precio_unitario !== detalle.precio_original
                           const tieneDescuento = detalle.descuento_monto > 0
-                          
-                          if (precioEditado && !tieneDescuento) {
-                            // Solo se editó el precio
+                          const precioEditado = detalle.precio_unitario !== detalle.precio_original
+
+                          if (!tieneDescuento && !precioEditado) {
+                            // Caso 1: Precio normal, sin descuentos ni ediciones
                             return (
                               <p>
-                                {detalle.cantidad} unidad{detalle.cantidad !== 1 ? 'es' : ''} 
+                                {detalle.cantidad} unidad{detalle.cantidad !== 1 ? 'es' : ''} × {formatCurrency(detalle.precio_unitario)} c/u
+                              </p>
+                            )
+                          } else if (tieneDescuento && !precioEditado) {
+                            // Caso 2: Se aplicó descuento pero NO se editó precio
+                            return (
+                              <>
+                                <p>
+                                  {detalle.cantidad} unidad{detalle.cantidad !== 1 ? 'es' : ''} × {formatCurrency(detalle.precio_unitario)} c/u
+                                </p>
+                                <p className="text-red-600 font-medium">
+                                  🏷️ Descuento: -{formatCurrency(detalle.descuento_monto)} total
+                                </p>
+                              </>
+                            )
+                          } else if (precioEditado && !tieneDescuento) {
+                            // Caso 3: Se editó precio pero NO se aplicó descuento
+                            return (
+                              <p>
+                                {detalle.cantidad} unidad{detalle.cantidad !== 1 ? 'es' : ''}
                                 <span className="ml-2">
                                   📝 <span className="text-amber-600 font-medium">Precio editado:</span>
                                   <span className="line-through text-gray-400 ml-1">
@@ -697,20 +686,8 @@ switch (filtroFecha) {
                                 </span>
                               </p>
                             )
-                          } else if (tieneDescuento && !precioEditado) {
-                            // Solo se aplicó descuento
-                            return (
-                              <>
-                                <p>
-                                  {detalle.cantidad} unidad{detalle.cantidad !== 1 ? 'es' : ''} × {formatCurrency(detalle.precio_original)} c/u
-                                </p>
-                                <p className="text-red-600 font-medium">
-                                  🏷️ Descuento: -{formatCurrency(detalle.descuento_monto)} total
-                                </p>
-                              </>
-                            )
                           } else if (tieneDescuento && precioEditado) {
-                            // Se editó precio Y se aplicó descuento
+                            // Caso 4: Se editó precio Y se aplicó descuento
                             return (
                               <>
                                 <p>
@@ -731,7 +708,7 @@ switch (filtroFecha) {
                               </>
                             )
                           } else {
-                            // No se editó nada, precio normal
+                            // No debería llegar aquí, pero por si acaso
                             return (
                               <p>
                                 {detalle.cantidad} unidad{detalle.cantidad !== 1 ? 'es' : ''} × {formatCurrency(detalle.precio_unitario)} c/u

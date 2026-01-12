@@ -83,7 +83,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                 </svg>
               </div>
               <div>
-                <h2 className="text-lg font-bold text-gray-900">LicoPos</h2>
+                <h2 className="text-lg font-bold text-gray-900">ControlaPos</h2>
                 <p className="text-xs text-gray-500">Panel Admin</p>
               </div>
             </div>

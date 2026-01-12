@@ -1,6 +1,6 @@
 {
-  "name": "LicoPos",
-  "short_name": "LicoPos",
+  "name": "ControlaPos",
+  "short_name": "ControlaPos",
   "description": "Sistema POS para licorerias",
   "start_url": "/",
   "display": "standalone",

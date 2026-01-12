@@ -65,7 +65,7 @@ export default function SistemaPausadoPage() {
 
         {/* Footer */}
         <p className="text-xs text-gray-400 mt-6">
-          LicoPos v2.1 • Bolivia
+          ControlaPos v2.1 • Bolivia
         </p>
       </div>
     </div>

@@ -1,6 +1,6 @@
 // Path: lib\stores\cart-store.ts
 // lib/stores/cart-store.ts
-// LICOPOS v2.1 - Store del Carrito de Compras
+// ControlaPos v2.1 - Store del Carrito de Compras
 // Usa Zustand para manejo de estado global
 
 import { create } from 'zustand'

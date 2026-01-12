@@ -9,7 +9,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // Colores principales del sistema LicoPos
+        // Colores principales del sistema ControlaPos
         primary: {
           50: '#ecfdf5',
           100: '#d1fae5',

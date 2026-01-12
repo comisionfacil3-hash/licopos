@@ -104,25 +104,25 @@ export default function InstallAppCard() {
       case 'android':
         return {
           title: 'Instalar App Android',
-          description: 'Instala LicoPOS en tu dispositivo Android para acceso rápido',
+          description: 'Instala ControlaPos en tu dispositivo Android para acceso rápido',
           button: 'Instalar ahora'
         }
       case 'ios':
         return {
           title: 'Instalar en iPhone/iPad',
-          description: 'Agrega LicoPOS a tu pantalla de inicio',
+          description: 'Agrega ControlaPos a tu pantalla de inicio',
           button: 'Ver instrucciones'
         }
       case 'desktop':
         return {
           title: 'Instalar en Windows/Mac',
-          description: 'Instala LicoPOS como aplicación de escritorio',
+          description: 'Instala ControlaPos como aplicación de escritorio',
           button: 'Instalar aplicación'
         }
       default:
         return {
           title: 'Instalar Aplicación',
-          description: 'Accede más rápido instalando LicoPOS',
+          description: 'Accede más rápido instalando ControlaPos',
           button: 'Instalar'
         }
     }

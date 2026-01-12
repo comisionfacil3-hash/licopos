@@ -178,7 +178,7 @@ export function generarPlantillaExcel(categorias: Categoria[]): void {
   XLSX.utils.book_append_sheet(wb, wsInstrucciones, 'Instrucciones')
 
   // Descargar archivo
-  XLSX.writeFile(wb, 'plantilla_productos_licopos.xlsx')
+  XLSX.writeFile(wb, 'plantilla_productos_ControlaPos.xlsx')
 }
 
 // Exportar inventario completo
@@ -257,7 +257,7 @@ export function exportarInventario(productos: ProductoWithCategoria[]): void {
 
   // Descargar archivo
   const fecha = new Date().toISOString().split('T')[0]
-  XLSX.writeFile(wb, `inventario_licopos_${fecha}.xlsx`)
+  XLSX.writeFile(wb, `inventario_ControlaPos_${fecha}.xlsx`)
 }
 
 // Leer archivo Excel

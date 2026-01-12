@@ -16,7 +16,7 @@ const sizes = [
 ];
 
 async function generateIcons() {
-  console.log('🎨 Generando iconos para LicoPOS...\n');
+  console.log('🎨 Generando iconos para ControlaPos...\n');
 
   // Verificar si existe el SVG
   if (!fs.existsSync('icon.svg')) {

@@ -3,7 +3,7 @@
 # Copiar TODO el resultado
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "DIAGNÓSTICO COMPLETO PWA - LICOPOS" -ForegroundColor Cyan
+Write-Host "DIAGNÓSTICO COMPLETO PWA - ControlaPos" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 

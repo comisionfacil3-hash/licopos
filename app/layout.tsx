@@ -6,13 +6,13 @@ import { AuthProvider } from '@/lib/hooks/use-auth'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'LicoPos - Sistema de Gestión para Licorerías',
+  title: 'ControlaPos - Sistema de Gestión para Licorerías',
   description: 'Sistema integral para gestión de licorerías multi-empresa',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'LicoPos',
+    title: 'ControlaPos',
   },
   formatDetection: {
     telephone: false,
@@ -45,10 +45,10 @@ export default function RootLayout({
     <html lang="es-BO">
       <head>
         {/* PWA Meta Tags */}
-        <meta name="application-name" content="LicoPos" />
+        <meta name="application-name" content="ControlaPos" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-        <meta name="apple-mobile-web-app-title" content="LicoPos" />
+        <meta name="apple-mobile-web-app-title" content="ControlaPos" />
         <meta name="mobile-web-app-capable" content="yes" />
         <link rel="apple-touch-icon" href="/icons/icon-180x180.png" />
       </head>
